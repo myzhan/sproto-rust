@@ -166,17 +166,31 @@ enum FieldTypeInfo {
 }
 
 /// Analyze a type to determine if it's Option<T> or Vec<T>, returning inner type.
+/// Also handles Option<Vec<T>> by setting both is_optional and is_vec.
 fn analyze_type(ty: &Type) -> (bool, bool, Option<&Type>) {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
             let ident = segment.ident.to_string();
-            if ident == "Option" || ident == "Vec" {
+            if ident == "Option" {
                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(GenericArgument::Type(inner)) = args.args.first() {
-                        return (ident == "Option", ident == "Vec", Some(inner));
+                        // Check if inner is Vec<T> -> Option<Vec<T>>
+                        let (_, inner_is_vec, inner_inner_type) = analyze_type(inner);
+                        if inner_is_vec {
+                            // Option<Vec<T>> -> is_optional=true, is_vec=true, inner_type=T
+                            return (true, true, inner_inner_type);
+                        }
+                        return (true, false, Some(inner));
                     }
                 }
-                return (ident == "Option", ident == "Vec", None);
+                return (true, false, None);
+            } else if ident == "Vec" {
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(GenericArgument::Type(inner)) = args.args.first() {
+                        return (false, true, Some(inner));
+                    }
+                }
+                return (false, true, None);
             }
         }
     }
