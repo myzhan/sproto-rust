@@ -1,0 +1,21 @@
+# Rust build artifacts
+/target
+/sproto-derive/target
+
+# Cargo lock for library (optional, but common for libs)
+# Cargo.lock
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug files
+*.pdb
+
+# Environment
+.env
+.env.local

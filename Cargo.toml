@@ -1,0 +1,27 @@
+[package]
+name = "sproto"
+version = "0.1.0"
+edition = "2021"
+description = "Rust implementation of the sproto binary serialization protocol"
+
+[features]
+default = ["derive"]
+serde = ["dep:serde"]
+derive = ["dep:sproto-derive", "serde"]
+
+[dependencies]
+thiserror = "2"
+serde = { version = "1", optional = true }
+sproto-derive = { path = "sproto-derive", optional = true }
+
+[dev-dependencies]
+pretty_assertions = "1"
+serde = { version = "1", features = ["derive"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "sproto_bench"
+harness = false
+
+[workspace]
+members = ["sproto-derive"]
