@@ -1,4 +1,7 @@
 //! Code generation for SprotoDecode derive macro.
+//!
+//! This module generates optimized inline decoding code that directly reads
+//! from bytes without constructing intermediate SprotoValue or Schema objects.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -30,7 +33,7 @@ pub fn derive_decode(input: &DeriveInput) -> Result<TokenStream> {
     };
 
     // Parse field attributes and collect field info with types
-    let mut field_data: Vec<(FieldInfo, TokenStream)> = Vec::new();
+    let mut field_data: Vec<(FieldInfo, FieldTypeInfo, &Type)> = Vec::new();
     for field in fields {
         let ident = field.ident.clone().unwrap();
         let attrs = FieldAttrs::from_attrs(&field.attrs)?;
@@ -46,7 +49,8 @@ pub fn derive_decode(input: &DeriveInput) -> Result<TokenStream> {
                     use_default: true,
                     span: field.ident.as_ref().unwrap().span(),
                 },
-                quote! { ::sproto::types::FieldType::Integer },
+                FieldTypeInfo::Integer,
+                &field.ty,
             ));
             continue;
         }
@@ -59,7 +63,7 @@ pub fn derive_decode(input: &DeriveInput) -> Result<TokenStream> {
         })?;
 
         let (is_optional, is_vec, inner_type) = analyze_type(&field.ty);
-        let field_type_tokens = rust_type_to_field_type(inner_type.unwrap_or(&field.ty));
+        let field_type_info = rust_type_to_field_type_info(inner_type.unwrap_or(&field.ty));
 
         field_data.push((
             FieldInfo {
@@ -71,163 +75,189 @@ pub fn derive_decode(input: &DeriveInput) -> Result<TokenStream> {
                 use_default: attrs.use_default,
                 span: field.ident.as_ref().unwrap().span(),
             },
-            field_type_tokens,
+            field_type_info,
+            &field.ty,
         ));
     }
 
     // Validate tags
-    let field_infos: Vec<_> = field_data.iter().map(|(info, _)| info.clone()).collect();
+    let field_infos: Vec<_> = field_data.iter().map(|(info, _, _)| info.clone()).collect();
     validate_fields(&field_infos)?;
 
-    // Generate field extraction code - extract directly from SprotoValue
-    let field_extractions = field_data.iter().map(|(field, _)| {
-        let ident = &field.ident;
-        let name_str = ident.to_string();
+    // Sort active fields by tag
+    let mut sorted_fields: Vec<_> = field_data.iter().filter(|(f, _, _)| !f.skip).collect();
+    sorted_fields.sort_by_key(|(f, _, _)| f.tag);
 
-        if field.skip {
-            quote! {
-                let #ident = Default::default();
+    // Generate field variable declarations
+    let field_declarations: Vec<_> = field_data
+        .iter()
+        .map(|(field, _, ty)| {
+            let ident = &field.ident;
+            if field.skip {
+                quote! { let mut #ident: #ty = Default::default(); }
+            } else if field.is_optional {
+                quote! { let mut #ident: #ty = None; }
+            } else if field.use_default {
+                quote! { let mut #ident: #ty = Default::default(); }
+            } else {
+                quote! { let mut #ident: Option<#ty> = None; }
             }
-        } else if field.is_optional {
+        })
+        .collect();
+
+    // Generate match arms for each tag
+    let match_arms: Vec<_> = sorted_fields
+        .iter()
+        .map(|(field, field_type, _ty)| {
+            let tag = field.tag;
+            let ident = &field.ident;
+
+            let decode_logic = if field.is_vec {
+                generate_array_decode(ident, field.is_optional, field.use_default, *field_type)
+            } else {
+                generate_scalar_decode(ident, field.is_optional, field.use_default, *field_type)
+            };
+
             quote! {
-                let #ident = fields.get(#name_str).map(|v| extract_field_value(v, #name_str)).transpose()?;
+                #tag => {
+                    #decode_logic
+                }
             }
-        } else if field.use_default {
-            quote! {
-                let #ident = match fields.get(#name_str) {
-                    Some(v) => extract_field_value(v, #name_str)?,
-                    None => Default::default(),
-                };
-            }
-        } else {
-            quote! {
-                let #ident = match fields.get(#name_str) {
-                    Some(v) => extract_field_value(v, #name_str)?,
-                    None => return Err(::sproto::error::DecodeError::InvalidData(
+        })
+        .collect();
+
+    // Generate final field extraction
+    let field_extractions: Vec<_> = field_data
+        .iter()
+        .map(|(field, _, _)| {
+            let ident = &field.ident;
+            let name_str = ident.to_string();
+            if field.skip || field.is_optional || field.use_default {
+                quote! { #ident }
+            } else {
+                quote! {
+                    #ident: #ident.ok_or_else(|| ::sproto::error::DecodeError::InvalidData(
                         format!("missing required field '{}'", #name_str)
-                    )),
-                };
+                    ))?
+                }
             }
-        }
-    });
-
-    let field_names = field_data.iter().map(|(f, _)| &f.ident);
-
-    // Generate schema field definitions sorted by tag
-    let mut sorted_fields: Vec<_> = field_data.iter().filter(|(f, _)| !f.skip).collect();
-    sorted_fields.sort_by_key(|(f, _)| f.tag);
-
-    let schema_fields = sorted_fields.iter().map(|(field, field_type_tokens)| {
-        let name_str = field.ident.to_string();
-        let tag = field.tag;
-        let is_array = field.is_vec;
-
-        quote! {
-            ::sproto::types::Field {
-                name: #name_str.to_string(),
-                tag: #tag,
-                field_type: #field_type_tokens,
-                is_array: #is_array,
-                key_tag: -1,
-                is_map: false,
-                decimal_precision: 0,
-            }
-        }
-    });
-
-    let type_name = name.to_string();
-    
-    // Calculate maxn - must include skip markers for non-contiguous tags
-    let maxn = if sorted_fields.is_empty() {
-        0usize
-    } else {
-        let num_fields = sorted_fields.len();
-        // Count gap regions
-        let mut gap_count = 0usize;
-        let mut prev_tag: i32 = -1;
-        for (f, _) in &sorted_fields {
-            if f.tag as i32 > prev_tag + 1 {
-                gap_count += 1;
-            }
-            prev_tag = f.tag as i32;
-        }
-        num_fields + gap_count
-    };
-
-    // Calculate base_tag
-    let base_tag_value = if sorted_fields.is_empty() {
-        -1i32
-    } else {
-        let first_tag = sorted_fields.first().unwrap().0.tag as i32;
-        let last_tag = sorted_fields.last().unwrap().0.tag as i32;
-        let expected_count = (last_tag - first_tag + 1) as usize;
-        if expected_count == sorted_fields.len() {
-            first_tag
-        } else {
-            -1i32
-        }
-    };
+        })
+        .collect();
 
     Ok(quote! {
         impl ::sproto::SprotoDecode for #name {
             fn sproto_decode(data: &[u8]) -> ::std::result::Result<Self, ::sproto::error::DecodeError> {
-                use ::std::collections::HashMap;
+                // Constants for wire format
+                const SIZEOF_HEADER: usize = 2;
+                const SIZEOF_FIELD: usize = 2;
+                const SIZEOF_LENGTH: usize = 4;
 
-                // Helper function to extract values from SprotoValue
-                fn extract_field_value<T: ::std::convert::TryFrom<::sproto::SprotoValue>>(
-                    value: &::sproto::SprotoValue,
-                    _field_name: &str,
-                ) -> ::std::result::Result<T, ::sproto::error::DecodeError>
-                where
-                    T::Error: ::std::fmt::Debug,
-                {
-                    T::try_from(value.clone()).map_err(|_| {
-                        ::sproto::error::DecodeError::InvalidData(
-                            format!("type conversion failed")
-                        )
-                    })
+                #[inline]
+                fn read_u16_le(buf: &[u8]) -> u16 {
+                    u16::from_le_bytes([buf[0], buf[1]])
                 }
 
-                // Build inline schema with compile-time determined field types
-                let schema_fields = vec![#(#schema_fields),*];
-                let sproto_type = ::sproto::types::SprotoType {
-                    name: #type_name.to_string(),
-                    fields: schema_fields,
-                    base_tag: #base_tag_value,
-                    maxn: #maxn,
-                };
+                #[inline]
+                fn read_u32_le(buf: &[u8]) -> u32 {
+                    u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])
+                }
 
-                let sproto = ::sproto::Sproto {
-                    types_list: vec![sproto_type],
-                    types_by_name: {
-                        let mut m = HashMap::new();
-                        m.insert(#type_name.to_string(), 0);
-                        m
-                    },
-                    protocols: vec![],
-                    protocols_by_name: HashMap::new(),
-                    protocols_by_tag: HashMap::new(),
-                };
+                #[inline]
+                fn read_u64_le(buf: &[u8]) -> u64 {
+                    u64::from_le_bytes([buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]])
+                }
 
-                // Decode bytes to SprotoValue
-                let value = ::sproto::codec::decode(&sproto, &sproto.types_list[0], data)?;
+                #[inline]
+                fn expand64(v: u32) -> u64 {
+                    let value = v as u64;
+                    if value & 0x80000000 != 0 {
+                        value | (!0u64 << 32)
+                    } else {
+                        value
+                    }
+                }
 
-                // Extract fields from SprotoValue
-                let fields = match &value {
-                    ::sproto::SprotoValue::Struct(map) => map,
-                    _ => return Err(::sproto::error::DecodeError::InvalidData(
-                        "expected struct".to_string()
-                    )),
-                };
+                let size = data.len();
+                if size < SIZEOF_HEADER {
+                    return Err(::sproto::error::DecodeError::Truncated {
+                        need: SIZEOF_HEADER,
+                        have: size,
+                    });
+                }
 
-                #(#field_extractions)*
+                let fn_count = read_u16_le(&data[0..]) as usize;
+                let field_part_end = SIZEOF_HEADER + fn_count * SIZEOF_FIELD;
+                if size < field_part_end {
+                    return Err(::sproto::error::DecodeError::Truncated {
+                        need: field_part_end,
+                        have: size,
+                    });
+                }
+
+                let field_part = &data[SIZEOF_HEADER..field_part_end];
+                let mut data_offset = field_part_end;
+                let mut __sproto_tag: i32 = -1;
+
+                // Declare field variables
+                #(#field_declarations)*
+
+                // Parse fields
+                for __sproto_i in 0..fn_count {
+                    let __sproto_wire_value = read_u16_le(&field_part[__sproto_i * SIZEOF_FIELD..]) as i32;
+                    __sproto_tag += 1;
+
+                    if __sproto_wire_value & 1 != 0 {
+                        // Odd value: skip tag
+                        __sproto_tag += __sproto_wire_value / 2;
+                        continue;
+                    }
+
+                    let __sproto_decoded_value = __sproto_wire_value / 2 - 1;
+                    let __sproto_data_start = data_offset;
+
+                    // If __sproto_decoded_value < 0, the data is in the data part
+                    if __sproto_decoded_value < 0 {
+                        if data_offset + SIZEOF_LENGTH > size {
+                            return Err(::sproto::error::DecodeError::Truncated {
+                                need: data_offset + SIZEOF_LENGTH,
+                                have: size,
+                            });
+                        }
+                        let dsz = read_u32_le(&data[data_offset..]) as usize;
+                        if data_offset + SIZEOF_LENGTH + dsz > size {
+                            return Err(::sproto::error::DecodeError::Truncated {
+                                need: data_offset + SIZEOF_LENGTH + dsz,
+                                have: size,
+                            });
+                        }
+                        data_offset += SIZEOF_LENGTH + dsz;
+                    }
+
+                    let field_data_slice = &data[__sproto_data_start..data_offset];
+                    let inline_val = if __sproto_decoded_value >= 0 { Some(__sproto_decoded_value as u64) } else { None };
+
+                    match __sproto_tag as u16 {
+                        #(#match_arms)*
+                        _ => {} // Unknown tag, skip for forward compatibility
+                    }
+                }
 
                 Ok(Self {
-                    #(#field_names),*
+                    #(#field_extractions),*
                 })
             }
         }
     })
+}
+
+/// Field type info for code generation
+#[derive(Clone, Copy, Debug)]
+enum FieldTypeInfo {
+    Integer,
+    Boolean,
+    Double,
+    String,
+    Binary,
 }
 
 /// Analyze a type to determine if it's Option<T> or Vec<T>, returning inner type.
@@ -236,7 +266,6 @@ fn analyze_type(ty: &Type) -> (bool, bool, Option<&Type>) {
         if let Some(segment) = type_path.path.segments.last() {
             let ident = segment.ident.to_string();
             if ident == "Option" || ident == "Vec" {
-                // Extract inner type
                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(GenericArgument::Type(inner)) = args.args.first() {
                         return (ident == "Option", ident == "Vec", Some(inner));
@@ -249,38 +278,246 @@ fn analyze_type(ty: &Type) -> (bool, bool, Option<&Type>) {
     (false, false, None)
 }
 
-/// Convert Rust type to sproto FieldType TokenStream.
-fn rust_type_to_field_type(ty: &Type) -> TokenStream {
+/// Convert Rust type to FieldTypeInfo
+fn rust_type_to_field_type_info(ty: &Type) -> FieldTypeInfo {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
             let ident = segment.ident.to_string();
             return match ident.as_str() {
                 "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "isize" | "usize" => {
-                    quote! { ::sproto::types::FieldType::Integer }
+                    FieldTypeInfo::Integer
                 }
-                "bool" => quote! { ::sproto::types::FieldType::Boolean },
-                "f32" | "f64" => quote! { ::sproto::types::FieldType::Double },
-                "String" | "str" => quote! { ::sproto::types::FieldType::String },
+                "bool" => FieldTypeInfo::Boolean,
+                "f32" | "f64" => FieldTypeInfo::Double,
+                "String" | "str" => FieldTypeInfo::String,
                 "Vec" => {
-                    // Check if it's Vec<u8> (binary)
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
                         if let Some(GenericArgument::Type(inner)) = args.args.first() {
                             if let Type::Path(inner_path) = inner {
                                 if let Some(inner_seg) = inner_path.path.segments.last() {
                                     if inner_seg.ident == "u8" {
-                                        return quote! { ::sproto::types::FieldType::Binary };
+                                        return FieldTypeInfo::Binary;
                                     }
                                 }
                             }
-                            // Otherwise it's an array of the inner type
-                            return rust_type_to_field_type(inner);
+                            return rust_type_to_field_type_info(inner);
                         }
                     }
-                    quote! { ::sproto::types::FieldType::Integer }
+                    FieldTypeInfo::Integer
                 }
-                _ => quote! { ::sproto::types::FieldType::String },
+                _ => FieldTypeInfo::String,
             };
         }
     }
-    quote! { ::sproto::types::FieldType::String }
+    FieldTypeInfo::String
+}
+
+/// Generate decoding code for a scalar (non-array) field
+fn generate_scalar_decode(
+    ident: &syn::Ident,
+    is_optional: bool,
+    use_default: bool,
+    field_type: FieldTypeInfo,
+) -> TokenStream {
+    let decode_value = match field_type {
+        FieldTypeInfo::Integer => quote! {
+            if let Some(v) = inline_val {
+                decoded = Some(v as i64);
+            } else {
+                let sz = read_u32_le(&field_data_slice[0..]) as usize;
+                let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+                if sz == 4 {
+                    decoded = Some(expand64(read_u32_le(content)) as i64);
+                } else if sz == 8 {
+                    let low = read_u32_le(content) as u64;
+                    let hi = read_u32_le(&content[4..]) as u64;
+                    decoded = Some((low | (hi << 32)) as i64);
+                }
+            }
+        },
+        FieldTypeInfo::Boolean => quote! {
+            if let Some(v) = inline_val {
+                decoded = Some(v != 0);
+            }
+        },
+        FieldTypeInfo::Double => quote! {
+            if inline_val.is_none() {
+                let sz = read_u32_le(&field_data_slice[0..]) as usize;
+                let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+                if sz == 8 {
+                    let low = read_u32_le(content) as u64;
+                    let hi = read_u32_le(&content[4..]) as u64;
+                    let bits = low | (hi << 32);
+                    decoded = Some(f64::from_bits(bits));
+                }
+            }
+        },
+        FieldTypeInfo::String => quote! {
+            if inline_val.is_none() {
+                let sz = read_u32_le(&field_data_slice[0..]) as usize;
+                let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+                decoded = Some(String::from_utf8(content.to_vec()).map_err(|e| {
+                    ::sproto::error::DecodeError::InvalidData(format!("invalid UTF-8: {}", e))
+                })?);
+            }
+        },
+        FieldTypeInfo::Binary => quote! {
+            if inline_val.is_none() {
+                let sz = read_u32_le(&field_data_slice[0..]) as usize;
+                let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+                decoded = Some(content.to_vec());
+            }
+        },
+    };
+
+    let type_hint = match field_type {
+        FieldTypeInfo::Integer => quote! { Option<i64> },
+        FieldTypeInfo::Boolean => quote! { Option<bool> },
+        FieldTypeInfo::Double => quote! { Option<f64> },
+        FieldTypeInfo::String => quote! { Option<String> },
+        FieldTypeInfo::Binary => quote! { Option<Vec<u8>> },
+    };
+
+    if is_optional {
+        quote! {
+            let mut decoded: #type_hint = None;
+            #decode_value
+            #ident = decoded;
+        }
+    } else if use_default {
+        quote! {
+            let mut decoded: #type_hint = None;
+            #decode_value
+            if let Some(v) = decoded {
+                #ident = v;
+            }
+        }
+    } else {
+        quote! {
+            let mut decoded: #type_hint = None;
+            #decode_value
+            #ident = decoded;
+        }
+    }
+}
+
+/// Generate decoding code for an array field
+fn generate_array_decode(
+    ident: &syn::Ident,
+    is_optional: bool,
+    use_default: bool,
+    field_type: FieldTypeInfo,
+) -> TokenStream {
+    let decode_array = match field_type {
+        FieldTypeInfo::Integer => quote! {
+            let sz = read_u32_le(&field_data_slice[0..]) as usize;
+            if sz == 0 {
+                decoded = Some(Vec::<i64>::new());
+            } else {
+                let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+                let int_len = content[0] as usize;
+                let values_data = &content[1..];
+                
+                if int_len == 4 || int_len == 8 {
+                    let count = values_data.len() / int_len;
+                    let mut arr: Vec<i64> = Vec::with_capacity(count);
+                    for i in 0..count {
+                        let offset = i * int_len;
+                        if int_len == 4 {
+                            arr.push(expand64(read_u32_le(&values_data[offset..])) as i64);
+                        } else {
+                            let low = read_u32_le(&values_data[offset..]) as u64;
+                            let hi = read_u32_le(&values_data[offset + 4..]) as u64;
+                            arr.push((low | (hi << 32)) as i64);
+                        }
+                    }
+                    decoded = Some(arr);
+                }
+            }
+        },
+        FieldTypeInfo::Boolean => quote! {
+            let sz = read_u32_le(&field_data_slice[0..]) as usize;
+            let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+            let arr: Vec<bool> = content.iter().map(|&b| b != 0).collect();
+            decoded = Some(arr);
+        },
+        FieldTypeInfo::Double => quote! {
+            let sz = read_u32_le(&field_data_slice[0..]) as usize;
+            if sz == 0 {
+                decoded = Some(Vec::<f64>::new());
+            } else {
+                let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+                let int_len = content[0] as usize;
+                let values_data = &content[1..];
+                
+                if int_len == 8 {
+                    let count = values_data.len() / int_len;
+                    let mut arr: Vec<f64> = Vec::with_capacity(count);
+                    for i in 0..count {
+                        let offset = i * 8;
+                        let low = read_u32_le(&values_data[offset..]) as u64;
+                        let hi = read_u32_le(&values_data[offset + 4..]) as u64;
+                        arr.push(f64::from_bits(low | (hi << 32)));
+                    }
+                    decoded = Some(arr);
+                }
+            }
+        },
+        FieldTypeInfo::String => quote! {
+            let sz = read_u32_le(&field_data_slice[0..]) as usize;
+            let mut content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+            let mut arr: Vec<String> = Vec::new();
+            while !content.is_empty() {
+                let elem_sz = read_u32_le(content) as usize;
+                let elem_data = &content[SIZEOF_LENGTH..SIZEOF_LENGTH + elem_sz];
+                arr.push(String::from_utf8(elem_data.to_vec()).map_err(|e| {
+                    ::sproto::error::DecodeError::InvalidData(format!("invalid UTF-8: {}", e))
+                })?);
+                content = &content[SIZEOF_LENGTH + elem_sz..];
+            }
+            decoded = Some(arr);
+        },
+        FieldTypeInfo::Binary => quote! {
+            let sz = read_u32_le(&field_data_slice[0..]) as usize;
+            let mut content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+            let mut arr: Vec<Vec<u8>> = Vec::new();
+            while !content.is_empty() {
+                let elem_sz = read_u32_le(content) as usize;
+                let elem_data = &content[SIZEOF_LENGTH..SIZEOF_LENGTH + elem_sz];
+                arr.push(elem_data.to_vec());
+                content = &content[SIZEOF_LENGTH + elem_sz..];
+            }
+            decoded = Some(arr);
+        },
+    };
+
+    let type_hint = match field_type {
+        FieldTypeInfo::Integer => quote! { Option<Vec<i64>> },
+        FieldTypeInfo::Boolean => quote! { Option<Vec<bool>> },
+        FieldTypeInfo::Double => quote! { Option<Vec<f64>> },
+        FieldTypeInfo::String => quote! { Option<Vec<String>> },
+        FieldTypeInfo::Binary => quote! { Option<Vec<Vec<u8>>> },
+    };
+
+    if is_optional {
+        quote! {
+            let mut decoded: #type_hint = None;
+            #decode_array
+            #ident = decoded;
+        }
+    } else if use_default {
+        quote! {
+            let mut decoded: #type_hint = None;
+            #decode_array
+            if let Some(v) = decoded {
+                #ident = v;
+            }
+        }
+    } else {
+        quote! {
+            let mut decoded: #type_hint = None;
+            #decode_array
+            #ident = decoded;
+        }
+    }
 }
