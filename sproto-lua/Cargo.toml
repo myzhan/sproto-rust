@@ -1,0 +1,12 @@
+[package]
+name = "sproto-lua"
+version = "0.1.0"
+edition = "2021"
+description = "Lua bindings for sproto-rust"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sproto = { path = "..", default-features = false }
+mlua = { version = "0.10", features = ["lua54", "module"] }

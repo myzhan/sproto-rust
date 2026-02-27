@@ -1,4 +1,4 @@
-.PHONY: all build test benchmark clean doc check fmt lint
+.PHONY: all build test benchmark clean doc check fmt lint lua-build lua-test
 
 all: build
 
@@ -56,3 +56,13 @@ ci: fmt-check lint test
 # Install development tools
 install-tools:
 	rustup component add rustfmt clippy
+
+# Build Lua binding
+lua-build:
+	cd sproto-lua && cargo build --release
+	cp target/release/libsproto_lua.dylib sproto-lua/sproto_lua.so || \
+	cp target/release/libsproto_lua.so sproto-lua/sproto_lua.so || true
+
+# Test Lua binding
+lua-test: lua-build
+	cd sproto-lua && LUA_CPATH="./?.so;;" busted tests/spec.lua

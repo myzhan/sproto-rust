@@ -41,6 +41,11 @@ pub struct Responder {
 }
 
 impl Responder {
+    /// Get the session ID for this responder.
+    pub fn session(&self) -> u64 {
+        self.session
+    }
+
     /// Encode a response and return the packed binary.
     pub fn respond(
         &self,

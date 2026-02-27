@@ -16,6 +16,10 @@
 # Debug files
 *.pdb
 
+# Shared libraries
+*.so
+*.dylib
+
 # Environment
 .env
 .env.local

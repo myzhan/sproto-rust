@@ -24,4 +24,4 @@ name = "sproto_bench"
 harness = false
 
 [workspace]
-members = ["sproto-derive"]
+members = ["sproto-derive", "sproto-lua"]
