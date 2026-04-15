@@ -48,14 +48,14 @@ macro_rules! pack_test {
     };
 }
 
-pack_test!(test_pack_ex1, test_unpack_ex1, "example1_encoded.bin", "example1_packed.bin");
-pack_test!(test_pack_ex2, test_unpack_ex2, "example2_encoded.bin", "example2_packed.bin");
-pack_test!(test_pack_ex3, test_unpack_ex3, "example3_encoded.bin", "example3_packed.bin");
-pack_test!(test_pack_ex4, test_unpack_ex4, "example4_encoded.bin", "example4_packed.bin");
-pack_test!(test_pack_ex5, test_unpack_ex5, "example5_encoded.bin", "example5_packed.bin");
-pack_test!(test_pack_ex6, test_unpack_ex6, "example6_encoded.bin", "example6_packed.bin");
-pack_test!(test_pack_ex7, test_unpack_ex7, "example7_encoded.bin", "example7_packed.bin");
-pack_test!(test_pack_ex8, test_unpack_ex8, "example8_encoded.bin", "example8_packed.bin");
+pack_test!(test_pack_simple_struct, test_unpack_simple_struct, "example1_encoded.bin", "example1_packed.bin");
+pack_test!(test_pack_struct_array, test_unpack_struct_array, "example2_encoded.bin", "example2_packed.bin");
+pack_test!(test_pack_number_array, test_unpack_number_array, "example3_encoded.bin", "example3_packed.bin");
+pack_test!(test_pack_big_number_array, test_unpack_big_number_array, "example4_encoded.bin", "example4_packed.bin");
+pack_test!(test_pack_bool_array, test_unpack_bool_array, "example5_encoded.bin", "example5_packed.bin");
+pack_test!(test_pack_number, test_unpack_number, "example6_encoded.bin", "example6_packed.bin");
+pack_test!(test_pack_double, test_unpack_double, "example7_encoded.bin", "example7_packed.bin");
+pack_test!(test_pack_fixed_point, test_unpack_fixed_point, "example8_encoded.bin", "example8_packed.bin");
 
 // Pack/unpack round-trip on addressbook
 #[test]

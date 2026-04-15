@@ -17,9 +17,9 @@ fn hexdump(data: &[u8]) -> String {
     data.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
 }
 
-// Example 1: Person { name="Alice", age=13, marital=false }
+// SimpleStruct: Person { name="Alice", age=13, marital=false }
 #[test]
-fn test_encode_example1() {
+fn test_encode_simple_struct() {
     let sproto = load_person_data_sproto();
     let person_type = sproto.get_type("Person").unwrap();
 
@@ -39,9 +39,9 @@ fn test_encode_example1() {
     );
 }
 
-// Example 2: Person with children
+// StructArray: Person with children
 #[test]
-fn test_encode_example2() {
+fn test_encode_struct_array() {
     let sproto = load_person_data_sproto();
     let person_type = sproto.get_type("Person").unwrap();
 
@@ -73,9 +73,9 @@ fn test_encode_example2() {
     );
 }
 
-// Example 3: Data { numbers=[1,2,3,4,5] }
+// NumberArray: Data { numbers=[1,2,3,4,5] }
 #[test]
-fn test_encode_example3() {
+fn test_encode_number_array() {
     let sproto = load_person_data_sproto();
     let data_type = sproto.get_type("Data").unwrap();
 
@@ -96,9 +96,9 @@ fn test_encode_example3() {
     );
 }
 
-// Example 4: Data { numbers=[(1<<32)+1, (1<<32)+2, (1<<32)+3] }
+// BigNumberArray: Data { numbers=[(1<<32)+1, (1<<32)+2, (1<<32)+3] }
 #[test]
-fn test_encode_example4() {
+fn test_encode_big_number_array() {
     let sproto = load_person_data_sproto();
     let data_type = sproto.get_type("Data").unwrap();
 
@@ -122,9 +122,9 @@ fn test_encode_example4() {
     );
 }
 
-// Example 5: Data { bools=[false, true, false] }
+// BoolArray: Data { bools=[false, true, false] }
 #[test]
-fn test_encode_example5() {
+fn test_encode_bool_array() {
     let sproto = load_person_data_sproto();
     let data_type = sproto.get_type("Data").unwrap();
 
@@ -147,9 +147,9 @@ fn test_encode_example5() {
     );
 }
 
-// Example 6: Data { number=100000, bignumber=-10000000000 }
+// Number: Data { number=100000, bignumber=-10000000000 }
 #[test]
-fn test_encode_example6() {
+fn test_encode_number() {
     let sproto = load_person_data_sproto();
     let data_type = sproto.get_type("Data").unwrap();
 
@@ -168,9 +168,9 @@ fn test_encode_example6() {
     );
 }
 
-// Example 7: Data { double=0.01171875, doubles=[0.01171875, 23, 4] }
+// Double: Data { double=0.01171875, doubles=[0.01171875, 23, 4] }
 #[test]
-fn test_encode_example7() {
+fn test_encode_double() {
     let sproto = load_person_data_sproto();
     let data_type = sproto.get_type("Data").unwrap();
 
@@ -196,9 +196,9 @@ fn test_encode_example7() {
     );
 }
 
-// Example 8: Data { fpn=1.82 } -- integer(2), encoded as 182
+// FixedPoint: Data { fpn=1.82 } -- integer(2), encoded as 182
 #[test]
-fn test_encode_example8() {
+fn test_encode_fixed_point() {
     let sproto = load_person_data_sproto();
     let data_type = sproto.get_type("Data").unwrap();
 
@@ -218,9 +218,181 @@ fn test_encode_example8() {
     );
 }
 
-// Full round-trip: decode C binary -> re-encode -> assert identical bytes
+// =============================================================================
+// Go reference inline byte tests (gosproto/sproto_test.go test vectors)
+// =============================================================================
+
+fn go_data_schema() -> sproto::Sproto {
+    sproto::parser::parse(
+        r#"
+        .Data {
+            numbers 0 : *integer
+            bools 1 : *boolean
+            number 2 : integer
+            bignumber 3 : integer
+            double 4 : double
+            doubles 5 : *double
+            strings 7 : *string
+            bytes 8 : binary
+        }
+    "#,
+    )
+    .unwrap()
+}
+
+fn go_addressbook_schema() -> sproto::Sproto {
+    sproto::parser::parse(
+        r#"
+        .PhoneNumber {
+            number 0 : string
+            type 1 : integer
+        }
+        .Person {
+            name 0 : string
+            id 1 : integer
+            email 2 : string
+            phone 3 : *PhoneNumber
+        }
+        .AddressBook {
+            person 0 : *Person
+        }
+    "#,
+    )
+    .unwrap()
+}
+
+/// Bytes: Data{Bytes:[0x28,0x29,0x30,0x31]}
+const GO_BYTES_FIELD: &[u8] = &[
+    0x02, 0x00, // fn = 2
+    0x0f, 0x00, // skip to id = 8
+    0x00, 0x00, // id = 8, value in data part
+    0x04, 0x00, 0x00, 0x00, // sizeof bytes
+    0x28, 0x29, 0x30, 0x31,
+];
+
+/// StringArray: Data{Strings:["Bob","Alice","Carol"]}
+const GO_STRING_ARRAY: &[u8] = &[
+    0x02, 0x00, // fn = 2
+    0x0d, 0x00, // skip to id = 7
+    0x00, 0x00, // id = 7, value in data part
+    0x19, 0x00, 0x00, 0x00, // sizeof []string
+    0x03, 0x00, 0x00, 0x00, 0x42, 0x6F, 0x62, // "Bob"
+    0x05, 0x00, 0x00, 0x00, 0x41, 0x6C, 0x69, 0x63, 0x65, // "Alice"
+    0x05, 0x00, 0x00, 0x00, 0x43, 0x61, 0x72, 0x6F, 0x6C, // "Carol"
+];
+
+/// EmptyIntSlice: Data{Numbers:[]}
+const GO_EMPTY_INT_SLICE: &[u8] = &[
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// EmptyDoubleSlice: Data{Doubles:[]}
+const GO_EMPTY_DOUBLE_SLICE: &[u8] = &[
+    0x02, 0x00, // fn = 2
+    0x09, 0x00, // skip id = 4
+    0x00, 0x00, // id = 5, value in data part
+    0x00, 0x00, 0x00, 0x00,
+];
+
+/// AddressBook encoded (from Go abData)
+const GO_ADDRESSBOOK: &[u8] = &[
+    1, 0, 0, 0, 122, 0, 0, 0, 68, 0, 0, 0, 4, 0, 0, 0, 34, 78, 1, 0, 0, 0, 5, 0, 0, 0, 65,
+    108, 105, 99, 101, 45, 0, 0, 0, 19, 0, 0, 0, 2, 0, 0, 0, 4, 0, 9, 0, 0, 0, 49, 50, 51, 52,
+    53, 54, 55, 56, 57, 18, 0, 0, 0, 2, 0, 0, 0, 6, 0, 8, 0, 0, 0, 56, 55, 54, 53, 52, 51, 50,
+    49, 46, 0, 0, 0, 4, 0, 0, 0, 66, 156, 1, 0, 0, 0, 3, 0, 0, 0, 66, 111, 98, 25, 0, 0, 0, 21,
+    0, 0, 0, 2, 0, 0, 0, 8, 0, 11, 0, 0, 0, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48,
+];
+
 #[test]
-fn test_roundtrip_all_examples() {
+fn test_encode_bytes_field() {
+    let schema = go_data_schema();
+    let st = schema.get_type("Data").unwrap();
+    let value = SprotoValue::from_fields(vec![(
+        "bytes",
+        SprotoValue::Binary(vec![0x28, 0x29, 0x30, 0x31]),
+    )]);
+    let encoded = codec::encode(&schema, st, &value).unwrap();
+    assert_eq!(hexdump(&encoded), hexdump(GO_BYTES_FIELD));
+}
+
+#[test]
+fn test_encode_string_array() {
+    let schema = go_data_schema();
+    let st = schema.get_type("Data").unwrap();
+    let value = SprotoValue::from_fields(vec![(
+        "strings",
+        SprotoValue::Array(vec![
+            SprotoValue::Str("Bob".into()),
+            SprotoValue::Str("Alice".into()),
+            SprotoValue::Str("Carol".into()),
+        ]),
+    )]);
+    let encoded = codec::encode(&schema, st, &value).unwrap();
+    assert_eq!(hexdump(&encoded), hexdump(GO_STRING_ARRAY));
+}
+
+#[test]
+fn test_encode_empty_int_slice() {
+    let schema = go_data_schema();
+    let st = schema.get_type("Data").unwrap();
+    let value = SprotoValue::from_fields(vec![("numbers", SprotoValue::Array(vec![]))]);
+    let encoded = codec::encode(&schema, st, &value).unwrap();
+    assert_eq!(hexdump(&encoded), hexdump(GO_EMPTY_INT_SLICE));
+}
+
+#[test]
+fn test_encode_empty_double_slice() {
+    let schema = go_data_schema();
+    let st = schema.get_type("Data").unwrap();
+    let value = SprotoValue::from_fields(vec![("doubles", SprotoValue::Array(vec![]))]);
+    let encoded = codec::encode(&schema, st, &value).unwrap();
+    assert_eq!(hexdump(&encoded), hexdump(GO_EMPTY_DOUBLE_SLICE));
+}
+
+#[test]
+fn test_encode_addressbook() {
+    let schema = go_addressbook_schema();
+    let st = schema.get_type("AddressBook").unwrap();
+    let value = SprotoValue::from_fields(vec![(
+        "person",
+        SprotoValue::Array(vec![
+            SprotoValue::from_fields(vec![
+                ("name", "Alice".into()),
+                ("id", 10000i64.into()),
+                (
+                    "phone",
+                    SprotoValue::Array(vec![
+                        SprotoValue::from_fields(vec![
+                            ("number", SprotoValue::Str("123456789".into())),
+                            ("type", SprotoValue::Integer(1)),
+                        ]),
+                        SprotoValue::from_fields(vec![
+                            ("number", SprotoValue::Str("87654321".into())),
+                            ("type", SprotoValue::Integer(2)),
+                        ]),
+                    ]),
+                ),
+            ]),
+            SprotoValue::from_fields(vec![
+                ("name", "Bob".into()),
+                ("id", 20000i64.into()),
+                (
+                    "phone",
+                    SprotoValue::Array(vec![SprotoValue::from_fields(vec![
+                        ("number", SprotoValue::Str("01234567890".into())),
+                        ("type", SprotoValue::Integer(3)),
+                    ])]),
+                ),
+            ]),
+        ]),
+    )]);
+    let encoded = codec::encode(&schema, st, &value).unwrap();
+    assert_eq!(hexdump(&encoded), hexdump(GO_ADDRESSBOOK));
+}
+
+// Full round-trip: decode binary -> re-encode -> assert identical bytes
+#[test]
+fn test_encode_decode_roundtrip_all() {
     let sproto = load_person_data_sproto();
 
     let cases: Vec<(&str, &str)> = vec![

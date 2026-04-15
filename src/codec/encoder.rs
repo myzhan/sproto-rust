@@ -193,6 +193,7 @@ fn encode_field(
         FieldType::String => {
             let s = match value {
                 SprotoValue::Str(s) => s.as_bytes(),
+                SprotoValue::Binary(b) => b.as_slice(),
                 _ => {
                     return Err(EncodeError::TypeMismatch {
                         field: field.name.clone(),
@@ -209,6 +210,7 @@ fn encode_field(
         FieldType::Binary => {
             let b = match value {
                 SprotoValue::Binary(b) => b.as_slice(),
+                SprotoValue::Str(s) => s.as_bytes(),
                 _ => {
                     return Err(EncodeError::TypeMismatch {
                         field: field.name.clone(),
@@ -371,6 +373,7 @@ fn encode_object_array(
             FieldType::String => {
                 let s = match val {
                     SprotoValue::Str(s) => s.as_bytes().to_vec(),
+                    SprotoValue::Binary(b) => b.clone(),
                     _ => {
                         return Err(EncodeError::TypeMismatch {
                             field: field.name.clone(),
@@ -384,6 +387,7 @@ fn encode_object_array(
             FieldType::Binary => {
                 match val {
                     SprotoValue::Binary(b) => b.clone(),
+                    SprotoValue::Str(s) => s.as_bytes().to_vec(),
                     _ => {
                         return Err(EncodeError::TypeMismatch {
                             field: field.name.clone(),

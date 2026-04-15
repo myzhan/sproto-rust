@@ -1085,3 +1085,101 @@ mod derive_tests {
         assert_eq!(original, decoded);
     }
 }
+
+// ============================================================================
+// AddressBook full pipeline (Go reference: encode -> pack -> unpack -> decode)
+// ============================================================================
+
+#[test]
+fn test_addressbook_full_pipeline() {
+    let schema = sproto::parser::parse(
+        r#"
+        .PhoneNumber {
+            number 0 : string
+            type 1 : integer
+        }
+        .Person {
+            name 0 : string
+            id 1 : integer
+            email 2 : string
+            phone 3 : *PhoneNumber
+        }
+        .AddressBook {
+            person 0 : *Person
+        }
+    "#,
+    )
+    .unwrap();
+    let st = schema.get_type("AddressBook").unwrap();
+
+    let value = SprotoValue::from_fields(vec![(
+        "person",
+        SprotoValue::Array(vec![
+            SprotoValue::from_fields(vec![
+                ("name", "Alice".into()),
+                ("id", 10000i64.into()),
+                (
+                    "phone",
+                    SprotoValue::Array(vec![
+                        SprotoValue::from_fields(vec![
+                            ("number", SprotoValue::Str("123456789".into())),
+                            ("type", SprotoValue::Integer(1)),
+                        ]),
+                        SprotoValue::from_fields(vec![
+                            ("number", SprotoValue::Str("87654321".into())),
+                            ("type", SprotoValue::Integer(2)),
+                        ]),
+                    ]),
+                ),
+            ]),
+            SprotoValue::from_fields(vec![
+                ("name", "Bob".into()),
+                ("id", 20000i64.into()),
+                (
+                    "phone",
+                    SprotoValue::Array(vec![SprotoValue::from_fields(vec![
+                        ("number", SprotoValue::Str("01234567890".into())),
+                        ("type", SprotoValue::Integer(3)),
+                    ])]),
+                ),
+            ]),
+        ]),
+    )]);
+
+    // Go abData bytes
+    let expected_encoded: &[u8] = &[
+        1, 0, 0, 0, 122, 0, 0, 0, 68, 0, 0, 0, 4, 0, 0, 0, 34, 78, 1, 0, 0, 0, 5, 0, 0, 0, 65,
+        108, 105, 99, 101, 45, 0, 0, 0, 19, 0, 0, 0, 2, 0, 0, 0, 4, 0, 9, 0, 0, 0, 49, 50, 51,
+        52, 53, 54, 55, 56, 57, 18, 0, 0, 0, 2, 0, 0, 0, 6, 0, 8, 0, 0, 0, 56, 55, 54, 53, 52,
+        51, 50, 49, 46, 0, 0, 0, 4, 0, 0, 0, 66, 156, 1, 0, 0, 0, 3, 0, 0, 0, 66, 111, 98, 25,
+        0, 0, 0, 21, 0, 0, 0, 2, 0, 0, 0, 8, 0, 11, 0, 0, 0, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+        57, 48,
+    ];
+
+    // Go abDataPacked bytes
+    let expected_packed: &[u8] = &[
+        17, 1, 122, 17, 68, 4, 71, 34, 78, 1, 5, 252, 65, 108, 105, 99, 101, 45, 136, 19, 2, 40,
+        4, 9, 254, 49, 50, 51, 52, 53, 54, 55, 71, 56, 57, 18, 2, 20, 6, 8, 255, 0, 56, 55, 54,
+        53, 52, 51, 50, 49, 17, 46, 4, 71, 66, 156, 1, 3, 60, 66, 111, 98, 25, 34, 21, 2, 138, 8,
+        11, 48, 255, 0, 49, 50, 51, 52, 53, 54, 55, 56, 3, 57, 48,
+    ];
+
+    let encoded = codec::encode(&schema, st, &value).unwrap();
+    assert_eq!(&encoded, expected_encoded, "encode mismatch");
+
+    let packed = pack::pack(&encoded);
+    assert_eq!(&packed, expected_packed, "pack mismatch");
+
+    let unpacked = pack::unpack(&packed).unwrap();
+    let decoded = codec::decode(&schema, st, &unpacked[..encoded.len()]).unwrap();
+    let persons = decoded.get("person").unwrap().as_array().unwrap();
+    assert_eq!(persons.len(), 2);
+    assert_eq!(
+        persons[0].get("name"),
+        Some(&SprotoValue::Str("Alice".into()))
+    );
+    assert_eq!(
+        persons[1].get("name"),
+        Some(&SprotoValue::Str("Bob".into()))
+    );
+}
