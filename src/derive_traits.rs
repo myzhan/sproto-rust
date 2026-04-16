@@ -12,8 +12,8 @@ use crate::error::{DecodeError, EncodeError};
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use sproto_derive::SprotoEncode;
+/// ```
+/// use sproto::SprotoEncode;
 ///
 /// #[derive(SprotoEncode)]
 /// struct Person {
@@ -25,6 +25,7 @@ use crate::error::{DecodeError, EncodeError};
 ///
 /// let person = Person { name: "Alice".into(), age: 30 };
 /// let bytes = person.sproto_encode().unwrap();
+/// assert!(!bytes.is_empty());
 /// ```
 pub trait SprotoEncode {
     /// Encode this value to sproto binary format.
@@ -47,10 +48,10 @@ pub trait SprotoEncode {
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use sproto_derive::SprotoDecode;
+/// ```
+/// use sproto::{SprotoEncode, SprotoDecode};
 ///
-/// #[derive(SprotoDecode)]
+/// #[derive(SprotoEncode, SprotoDecode, Debug, PartialEq)]
 /// struct Person {
 ///     #[sproto(tag = 0)]
 ///     name: String,
@@ -58,8 +59,10 @@ pub trait SprotoEncode {
 ///     age: i64,
 /// }
 ///
-/// let bytes = /* ... */;
-/// let person = Person::sproto_decode(&bytes).unwrap();
+/// let person = Person { name: "Alice".into(), age: 30 };
+/// let bytes = person.sproto_encode().unwrap();
+/// let decoded = Person::sproto_decode(&bytes).unwrap();
+/// assert_eq!(person, decoded);
 /// ```
 pub trait SprotoDecode: Sized {
     /// Decode a value from sproto binary format.
