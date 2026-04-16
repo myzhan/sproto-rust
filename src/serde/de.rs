@@ -1,432 +1,474 @@
-//! Serde deserializer for converting SprotoValue to Rust types.
-
-use std::collections::HashMap;
+//! Direct Serde deserializer: sproto wire format -> Rust struct, no SprotoValue intermediate.
 
 use serde::de::{self, DeserializeSeed, Visitor};
 
+use crate::codec::wire::*;
+use crate::types::{Field, FieldType, Sproto, SprotoType};
+
 use super::error::SerdeError;
-use crate::value::SprotoValue;
 
-/// Deserializer that converts SprotoValue to Rust types.
-pub struct SprotoDeserializer<'de> {
-    value: &'de SprotoValue,
+/// Decode sproto wire bytes directly into a Rust struct.
+pub fn direct_decode<'de, T: de::Deserialize<'de>>(
+    sproto: &'de Sproto,
+    sproto_type: &'de SprotoType,
+    data: &'de [u8],
+) -> Result<T, SerdeError> {
+    let deser = DirectDeserializer::new(sproto, sproto_type, data)?;
+    T::deserialize(deser)
 }
 
-impl<'de> SprotoDeserializer<'de> {
-    /// Create a new deserializer from a SprotoValue.
-    pub fn new(value: &'de SprotoValue) -> Self {
-        SprotoDeserializer { value }
-    }
+// ── Parsed field from wire header ───────────────────────────────────────
 
-    /// Deserialize a SprotoValue to the target type.
-    pub fn deserialize<T: de::Deserialize<'de>>(value: &'de SprotoValue) -> Result<T, SerdeError> {
-        T::deserialize(SprotoDeserializer::new(value))
+struct ParsedField<'de> {
+    field: &'de Field,
+    /// If >= 0, value is inline (decoded_value). If < 0, data is in data slice.
+    inline_value: i32,
+    /// Slice of field data (excluding length prefix). Empty if inline.
+    data: &'de [u8],
+}
+
+// ── Top-level deserializer ──────────────────────────────────────────────
+
+struct DirectDeserializer<'de> {
+    sproto: &'de Sproto,
+    parsed: Vec<ParsedField<'de>>,
+}
+
+impl<'de> DirectDeserializer<'de> {
+    fn new(
+        sproto: &'de Sproto,
+        sproto_type: &'de SprotoType,
+        data: &'de [u8],
+    ) -> Result<Self, SerdeError> {
+        let parsed = parse_wire_fields(sproto_type, data)?;
+        Ok(DirectDeserializer { sproto, parsed })
     }
 }
 
-impl<'de> de::Deserializer<'de> for SprotoDeserializer<'de> {
+/// Parse wire header into a list of ParsedField entries.
+fn parse_wire_fields<'de>(
+    sproto_type: &'de SprotoType,
+    data: &'de [u8],
+) -> Result<Vec<ParsedField<'de>>, SerdeError> {
+    let size = data.len();
+    if size < SIZEOF_HEADER {
+        return Err(SerdeError::Custom(format!("truncated header: need {}, have {}", SIZEOF_HEADER, size)));
+    }
+    let fn_count = read_u16_le(&data[0..]) as usize;
+    let field_part_end = SIZEOF_HEADER + fn_count * SIZEOF_FIELD;
+    if size < field_part_end {
+        return Err(SerdeError::Custom(format!("truncated fields: need {}, have {}", field_part_end, size)));
+    }
+    let field_part = &data[SIZEOF_HEADER..field_part_end];
+    let mut data_offset = field_part_end;
+    let mut tag: i32 = -1;
+    let mut result = Vec::with_capacity(fn_count);
+
+    for i in 0..fn_count {
+        let value = read_u16_le(&field_part[i * SIZEOF_FIELD..]) as i32;
+        tag += 1;
+        if value & 1 != 0 {
+            tag += value / 2;
+            continue;
+        }
+        let decoded_value = value / 2 - 1;
+        let mut field_data: &[u8] = &[];
+        if decoded_value < 0 {
+            if data_offset + SIZEOF_LENGTH > size {
+                return Err(SerdeError::Custom("truncated data length".into()));
+            }
+            let dsz = read_u32_le(&data[data_offset..]) as usize;
+            if data_offset + SIZEOF_LENGTH + dsz > size {
+                return Err(SerdeError::Custom("truncated data".into()));
+            }
+            field_data = &data[data_offset + SIZEOF_LENGTH..data_offset + SIZEOF_LENGTH + dsz];
+            data_offset += SIZEOF_LENGTH + dsz;
+        }
+        let field = match sproto_type.find_field_by_tag(tag as u16) {
+            Some(f) => f,
+            None => continue,
+        };
+        result.push(ParsedField { field, inline_value: decoded_value, data: field_data });
+    }
+    Ok(result)
+}
+
+impl<'de> de::Deserializer<'de> for DirectDeserializer<'de> {
+    type Error = SerdeError;
+
+    fn deserialize_struct<V: Visitor<'de>>(
+        self, _name: &'static str, _fields: &'static [&'static str], visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        visitor.visit_map(WireMapAccess {
+            sproto: self.sproto,
+            parsed: self.parsed,
+            index: 0,
+            current: None,
+        })
+    }
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        self.deserialize_map(visitor)
+    }
+
+    fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_map(WireMapAccess {
+            sproto: self.sproto,
+            parsed: self.parsed,
+            index: 0,
+            current: None,
+        })
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes
+        byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct
+        enum identifier ignored_any
+    }
+}
+
+// ── WireMapAccess ───────────────────────────────────────────────────────
+
+struct WireMapAccess<'de> {
+    sproto: &'de Sproto,
+    parsed: Vec<ParsedField<'de>>,
+    index: usize,
+    current: Option<usize>,
+}
+
+impl<'de> de::MapAccess<'de> for WireMapAccess<'de> {
+    type Error = SerdeError;
+
+    fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error> {
+        if self.index >= self.parsed.len() {
+            return Ok(None);
+        }
+        self.current = Some(self.index);
+        let name = &self.parsed[self.index].field.name;
+        self.index += 1;
+        seed.deserialize(StrDeserializer(&name)).map(Some)
+    }
+
+    fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Self::Error> {
+        let idx = self.current.take().ok_or_else(|| SerdeError::Custom("value before key".into()))?;
+        let pf = &self.parsed[idx];
+        let deser = FieldValueDeserializer {
+            sproto: self.sproto,
+            field: pf.field,
+            inline_value: pf.inline_value,
+            data: pf.data,
+        };
+        seed.deserialize(deser)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.parsed.len() - self.index)
+    }
+}
+
+// ── FieldValueDeserializer ──────────────────────────────────────────────
+
+struct FieldValueDeserializer<'de> {
+    sproto: &'de Sproto,
+    field: &'de Field,
+    inline_value: i32,
+    data: &'de [u8],
+}
+
+impl<'de> FieldValueDeserializer<'de> {
+    fn decode_integer(&self) -> Result<i64, SerdeError> {
+        if self.inline_value >= 0 {
+            return Ok(self.inline_value as i64);
+        }
+        let d = self.data;
+        if d.len() == SIZEOF_INT32 {
+            Ok(expand64(read_u32_le(d)) as i64)
+        } else if d.len() == SIZEOF_INT64 {
+            let lo = read_u32_le(d) as u64;
+            let hi = read_u32_le(&d[SIZEOF_INT32..]) as u64;
+            Ok((lo | (hi << 32)) as i64)
+        } else {
+            Err(SerdeError::Custom(format!("invalid integer size {}", d.len())))
+        }
+    }
+
+    fn decode_double(&self) -> Result<f64, SerdeError> {
+        let d = self.data;
+        if d.len() == SIZEOF_INT64 {
+            let lo = read_u32_le(d) as u64;
+            let hi = read_u32_le(&d[SIZEOF_INT32..]) as u64;
+            Ok(f64::from_bits(lo | (hi << 32)))
+        } else {
+            Err(SerdeError::Custom(format!("invalid double size {}", d.len())))
+        }
+    }
+}
+
+impl<'de> de::Deserializer<'de> for FieldValueDeserializer<'de> {
     type Error = SerdeError;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Integer(v) => visitor.visit_i64(*v),
-            SprotoValue::Boolean(v) => visitor.visit_bool(*v),
-            SprotoValue::Str(v) => visitor.visit_str(v),
-            SprotoValue::Binary(v) => visitor.visit_bytes(v),
-            SprotoValue::Double(v) => visitor.visit_f64(*v),
-            SprotoValue::Struct(_) => self.deserialize_map(visitor),
-            SprotoValue::Array(_) => self.deserialize_seq(visitor),
+        if self.field.is_array {
+            return self.deserialize_seq(visitor);
+        }
+        match &self.field.field_type {
+            FieldType::Integer => visitor.visit_i64(self.decode_integer()?),
+            FieldType::Boolean => {
+                let v = if self.inline_value >= 0 { self.inline_value != 0 } else { self.data.first().copied().unwrap_or(0) != 0 };
+                visitor.visit_bool(v)
+            }
+            FieldType::Double => visitor.visit_f64(self.decode_double()?),
+            FieldType::String => {
+                let s = std::str::from_utf8(self.data).map_err(|e| SerdeError::Custom(format!("invalid utf8: {}", e)))?;
+                visitor.visit_borrowed_str(s)
+            }
+            FieldType::Binary => visitor.visit_borrowed_bytes(self.data),
+            FieldType::Struct(idx) => {
+                let sub_type = &self.sproto.types_list[*idx];
+                let sub = DirectDeserializer::new(self.sproto, sub_type, self.data)?;
+                sub.deserialize_any(visitor)
+            }
         }
     }
 
     fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Boolean(v) => visitor.visit_bool(*v),
-            SprotoValue::Integer(v) => visitor.visit_bool(*v != 0),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "bool".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
+        let v = if self.inline_value >= 0 { self.inline_value != 0 } else { self.decode_integer()? != 0 };
+        visitor.visit_bool(v)
     }
 
-    fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_i64(visitor)
-    }
-
-    fn deserialize_i16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_i64(visitor)
-    }
-
-    fn deserialize_i32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_i64(visitor)
-    }
-
-    fn deserialize_i64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Integer(v) => visitor.visit_i64(*v),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "integer".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
-    }
-
-    fn deserialize_u8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_u64(visitor)
-    }
-
-    fn deserialize_u16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_u64(visitor)
-    }
-
-    fn deserialize_u32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_u64(visitor)
-    }
-
-    fn deserialize_u64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Integer(v) => visitor.visit_u64(*v as u64),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "integer".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
-    }
-
-    fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_f64(visitor)
-    }
-
-    fn deserialize_f64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Double(v) => visitor.visit_f64(*v),
-            SprotoValue::Integer(v) => visitor.visit_f64(*v as f64),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "double".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
-    }
-
-    fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Str(s) => {
-                let mut chars = s.chars();
-                match (chars.next(), chars.next()) {
-                    (Some(c), None) => visitor.visit_char(c),
-                    _ => Err(SerdeError::TypeMismatch {
-                        field: String::new(),
-                        expected: "single character".into(),
-                        actual: format!("string of length {}", s.len()),
-                    }),
-                }
-            }
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "char".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
-    }
+    fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_i64(self.decode_integer()?) }
+    fn deserialize_i16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_i64(self.decode_integer()?) }
+    fn deserialize_i32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_i64(self.decode_integer()?) }
+    fn deserialize_i64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_i64(self.decode_integer()?) }
+    fn deserialize_u8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_u64(self.decode_integer()? as u64) }
+    fn deserialize_u16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_u64(self.decode_integer()? as u64) }
+    fn deserialize_u32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_u64(self.decode_integer()? as u64) }
+    fn deserialize_u64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_u64(self.decode_integer()? as u64) }
+    fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_f64(self.decode_double()?) }
+    fn deserialize_f64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_f64(self.decode_double()?) }
 
     fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Str(s) => visitor.visit_str(s),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "string".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
+        let s = std::str::from_utf8(self.data).map_err(|e| SerdeError::Custom(format!("invalid utf8: {}", e)))?;
+        visitor.visit_borrowed_str(s)
     }
-
-    fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_str(visitor)
-    }
-
-    fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Binary(b) => visitor.visit_bytes(b),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "binary".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
-    }
-
-    fn deserialize_byte_buf<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Binary(b) => visitor.visit_byte_buf(b.clone()),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "binary".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
-    }
+    fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { self.deserialize_str(visitor) }
+    fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_borrowed_bytes(self.data) }
+    fn deserialize_byte_buf<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_byte_buf(self.data.to_vec()) }
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        // If we get here with a value, it's Some
         visitor.visit_some(self)
     }
 
-    fn deserialize_unit<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_unit()
-    }
+    fn deserialize_unit<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_unit() }
+    fn deserialize_unit_struct<V: Visitor<'de>>(self, _: &'static str, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_unit() }
 
-    fn deserialize_unit_struct<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        self.deserialize_unit(visitor)
-    }
-
-    fn deserialize_newtype_struct<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
+    fn deserialize_newtype_struct<V: Visitor<'de>>(self, _: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
         visitor.visit_newtype_struct(self)
     }
 
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Array(arr) => visitor.visit_seq(SeqAccess::new(arr)),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "array".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
-    }
-
-    fn deserialize_tuple<V: Visitor<'de>>(
-        self,
-        _len: usize,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        self.deserialize_seq(visitor)
-    }
-
-    fn deserialize_tuple_struct<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        _len: usize,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        self.deserialize_seq(visitor)
-    }
-
-    fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Struct(map) => visitor.visit_map(MapAccess::new(map)),
-            _ => Err(SerdeError::TypeMismatch {
-                field: String::new(),
-                expected: "struct".into(),
-                actual: self.value.type_name().into(),
-            }),
-        }
-    }
-
-    fn deserialize_struct<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        _fields: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        self.deserialize_map(visitor)
-    }
-
-    fn deserialize_enum<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        match self.value {
-            SprotoValue::Integer(v) => visitor.visit_enum(EnumAccess { value: *v }),
-            _ => Err(SerdeError::UnsupportedType(
-                "enums must be encoded as integers".into(),
-            )),
-        }
-    }
-
-    fn deserialize_identifier<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        self.deserialize_str(visitor)
-    }
-
-    fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_unit()
-    }
-}
-
-/// Sequence access for deserializing arrays.
-struct SeqAccess<'de> {
-    iter: std::slice::Iter<'de, SprotoValue>,
-}
-
-impl<'de> SeqAccess<'de> {
-    fn new(arr: &'de [SprotoValue]) -> Self {
-        SeqAccess { iter: arr.iter() }
-    }
-}
-
-impl<'de> de::SeqAccess<'de> for SeqAccess<'de> {
-    type Error = SerdeError;
-
-    fn next_element_seed<T: DeserializeSeed<'de>>(
-        &mut self,
-        seed: T,
-    ) -> Result<Option<T::Value>, Self::Error> {
-        match self.iter.next() {
-            Some(value) => seed.deserialize(SprotoDeserializer::new(value)).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    fn size_hint(&self) -> Option<usize> {
-        Some(self.iter.len())
-    }
-}
-
-/// Map access for deserializing structs.
-struct MapAccess<'de> {
-    iter: std::collections::hash_map::Iter<'de, String, SprotoValue>,
-    current_value: Option<&'de SprotoValue>,
-}
-
-impl<'de> MapAccess<'de> {
-    fn new(map: &'de HashMap<String, SprotoValue>) -> Self {
-        MapAccess {
-            iter: map.iter(),
-            current_value: None,
-        }
-    }
-}
-
-impl<'de> de::MapAccess<'de> for MapAccess<'de> {
-    type Error = SerdeError;
-
-    fn next_key_seed<K: DeserializeSeed<'de>>(
-        &mut self,
-        seed: K,
-    ) -> Result<Option<K::Value>, Self::Error> {
-        match self.iter.next() {
-            Some((key, value)) => {
-                self.current_value = Some(value);
-                // Deserialize the key as a string
-                seed.deserialize(StrDeserializer(key)).map(Some)
+        let d = self.data;
+        match &self.field.field_type {
+            FieldType::Integer | FieldType::Double => {
+                if d.is_empty() { return visitor.visit_seq(EmptySeq); }
+                let int_len = d[0] as usize;
+                let vals = &d[1..];
+                visitor.visit_seq(NumArrayAccess { field: self.field, data: vals, int_len, offset: 0 })
             }
-            None => Ok(None),
+            FieldType::Boolean => {
+                visitor.visit_seq(BoolArrayAccess { data: d, offset: 0 })
+            }
+            FieldType::String | FieldType::Binary | FieldType::Struct(_) => {
+                visitor.visit_seq(ObjectArrayAccess { sproto: self.sproto, field: self.field, data: d, offset: 0 })
+            }
         }
     }
 
-    fn next_value_seed<V: DeserializeSeed<'de>>(
-        &mut self,
-        seed: V,
-    ) -> Result<V::Value, Self::Error> {
-        let value = self.current_value.take().ok_or_else(|| {
-            SerdeError::Custom("next_value_seed called before next_key_seed".into())
-        })?;
-        seed.deserialize(SprotoDeserializer::new(value))
+    fn deserialize_tuple<V: Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error> { self.deserialize_seq(visitor) }
+    fn deserialize_tuple_struct<V: Visitor<'de>>(self, _: &'static str, _: usize, visitor: V) -> Result<V::Value, Self::Error> { self.deserialize_seq(visitor) }
+
+    fn deserialize_struct<V: Visitor<'de>>(self, _name: &'static str, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+        let sub_type = match &self.field.field_type {
+            FieldType::Struct(idx) => &self.sproto.types_list[*idx],
+            _ => return Err(SerdeError::TypeMismatch { field: self.field.name.to_string(), expected: "struct".into(), actual: "non-struct".into() }),
+        };
+        let sub = DirectDeserializer::new(self.sproto, sub_type, self.data)?;
+        sub.deserialize_struct(_name, _fields, visitor)
     }
 
-    fn size_hint(&self) -> Option<usize> {
-        Some(self.iter.len())
+    fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { self.deserialize_any(visitor) }
+
+    fn deserialize_enum<V: Visitor<'de>>(self, _: &'static str, _: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+        let v = self.decode_integer()?;
+        visitor.visit_enum(EnumAccess(v))
+    }
+
+    fn deserialize_identifier<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { self.deserialize_str(visitor) }
+    fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_unit() }
+    fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let s = std::str::from_utf8(self.data).map_err(|e| SerdeError::Custom(format!("invalid utf8: {}", e)))?;
+        let mut chars = s.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) => visitor.visit_char(c),
+            _ => Err(SerdeError::Custom(format!("expected single char, got len {}", s.len()))),
+        }
     }
 }
 
-/// Simple deserializer for string keys.
-struct StrDeserializer<'a>(&'a str);
+// ── Array access types ──────────────────────────────────────────────────
 
+struct EmptySeq;
+impl<'de> de::SeqAccess<'de> for EmptySeq {
+    type Error = SerdeError;
+    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, _: T) -> Result<Option<T::Value>, Self::Error> { Ok(None) }
+    fn size_hint(&self) -> Option<usize> { Some(0) }
+}
+
+struct NumArrayAccess<'de> { field: &'de Field, data: &'de [u8], int_len: usize, offset: usize }
+
+impl<'de> de::SeqAccess<'de> for NumArrayAccess<'de> {
+    type Error = SerdeError;
+    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
+        if self.offset >= self.data.len() { return Ok(None); }
+        let chunk = &self.data[self.offset..];
+        self.offset += self.int_len;
+        let is_double = self.field.field_type == FieldType::Double;
+        if self.int_len == SIZEOF_INT32 {
+            let raw = expand64(read_u32_le(chunk));
+            if is_double {
+                seed.deserialize(F64Deser(f64::from_bits(raw))).map(Some)
+            } else {
+                seed.deserialize(I64Deser(raw as i64)).map(Some)
+            }
+        } else {
+            let lo = read_u32_le(chunk) as u64;
+            let hi = read_u32_le(&chunk[SIZEOF_INT32..]) as u64;
+            let raw = lo | (hi << 32);
+            if is_double {
+                seed.deserialize(F64Deser(f64::from_bits(raw))).map(Some)
+            } else {
+                seed.deserialize(I64Deser(raw as i64)).map(Some)
+            }
+        }
+    }
+    fn size_hint(&self) -> Option<usize> {
+        if self.int_len == 0 { Some(0) } else { Some((self.data.len() - self.offset) / self.int_len) }
+    }
+}
+
+struct BoolArrayAccess<'de> { data: &'de [u8], offset: usize }
+
+impl<'de> de::SeqAccess<'de> for BoolArrayAccess<'de> {
+    type Error = SerdeError;
+    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
+        if self.offset >= self.data.len() { return Ok(None); }
+        let v = self.data[self.offset] != 0;
+        self.offset += 1;
+        seed.deserialize(BoolDeser(v)).map(Some)
+    }
+    fn size_hint(&self) -> Option<usize> { Some(self.data.len() - self.offset) }
+}
+
+struct ObjectArrayAccess<'de> { sproto: &'de Sproto, field: &'de Field, data: &'de [u8], offset: usize }
+
+impl<'de> de::SeqAccess<'de> for ObjectArrayAccess<'de> {
+    type Error = SerdeError;
+    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
+        if self.offset >= self.data.len() { return Ok(None); }
+        let d = &self.data[self.offset..];
+        if d.len() < SIZEOF_LENGTH {
+            return Err(SerdeError::Custom("truncated object array element".into()));
+        }
+        let esz = read_u32_le(d) as usize;
+        let elem = &d[SIZEOF_LENGTH..SIZEOF_LENGTH + esz];
+        self.offset += SIZEOF_LENGTH + esz;
+        match &self.field.field_type {
+            FieldType::String => {
+                let s = std::str::from_utf8(elem).map_err(|e| SerdeError::Custom(format!("invalid utf8: {}", e)))?;
+                seed.deserialize(StrValDeser(s)).map(Some)
+            }
+            FieldType::Binary => {
+                seed.deserialize(BytesDeser(elem)).map(Some)
+            }
+            FieldType::Struct(idx) => {
+                let st = &self.sproto.types_list[*idx];
+                let sub = DirectDeserializer::new(self.sproto, st, elem)?;
+                seed.deserialize(sub).map(Some)
+            }
+            _ => Err(SerdeError::Custom("unexpected array element type".into())),
+        }
+    }
+}
+
+// ── Primitive deserializers ─────────────────────────────────────────────
+
+struct I64Deser(i64);
+impl<'de> de::Deserializer<'de> for I64Deser {
+    type Error = SerdeError;
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_i64(self.0) }
+    serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }
+}
+
+struct F64Deser(f64);
+impl<'de> de::Deserializer<'de> for F64Deser {
+    type Error = SerdeError;
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_f64(self.0) }
+    serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }
+}
+
+struct BoolDeser(bool);
+impl<'de> de::Deserializer<'de> for BoolDeser {
+    type Error = SerdeError;
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_bool(self.0) }
+    serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }
+}
+
+struct StrDeserializer<'a>(&'a str);
 impl<'de, 'a> de::Deserializer<'de> for StrDeserializer<'a> {
     type Error = SerdeError;
-
-    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_str(self.0)
-    }
-
-    serde::forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes
-        byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct
-        map struct enum identifier ignored_any
-    }
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_str(self.0) }
+    serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }
 }
 
-/// Enum access for deserializing unit variants as integers.
-struct EnumAccess {
-    value: i64,
+struct StrValDeser<'a>(&'a str);
+impl<'de, 'a> de::Deserializer<'de> for StrValDeser<'a> {
+    type Error = SerdeError;
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_str(self.0) }
+    fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_string(self.0.to_owned()) }
+    serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }
 }
 
+struct BytesDeser<'a>(&'a [u8]);
+impl<'de, 'a> de::Deserializer<'de> for BytesDeser<'a> {
+    type Error = SerdeError;
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_bytes(self.0) }
+    serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }
+}
+
+// ── Enum support ────────────────────────────────────────────────────────
+
+struct EnumAccess(i64);
 impl<'de> de::EnumAccess<'de> for EnumAccess {
     type Error = SerdeError;
-    type Variant = VariantAccess;
-
-    fn variant_seed<V: DeserializeSeed<'de>>(
-        self,
-        seed: V,
-    ) -> Result<(V::Value, Self::Variant), Self::Error> {
-        let variant = seed.deserialize(U32Deserializer(self.value as u32))?;
-        Ok((variant, VariantAccess))
+    type Variant = UnitVariant;
+    fn variant_seed<V: DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error> {
+        let v = seed.deserialize(U32Deser(self.0 as u32))?;
+        Ok((v, UnitVariant))
     }
 }
 
-/// Simple deserializer for u32 (enum discriminant).
-struct U32Deserializer(u32);
-
-impl<'de> de::Deserializer<'de> for U32Deserializer {
+struct U32Deser(u32);
+impl<'de> de::Deserializer<'de> for U32Deser {
     type Error = SerdeError;
-
-    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_u32(self.0)
-    }
-
-    serde::forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes
-        byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct
-        map struct enum identifier ignored_any
-    }
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> { visitor.visit_u32(self.0) }
+    serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct enum identifier ignored_any }
 }
 
-/// Variant access for unit enum variants.
-struct VariantAccess;
-
-impl<'de> de::VariantAccess<'de> for VariantAccess {
+struct UnitVariant;
+impl<'de> de::VariantAccess<'de> for UnitVariant {
     type Error = SerdeError;
-
-    fn unit_variant(self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn newtype_variant_seed<T: DeserializeSeed<'de>>(
-        self,
-        _seed: T,
-    ) -> Result<T::Value, Self::Error> {
-        Err(SerdeError::UnsupportedType(
-            "newtype variants are not supported".into(),
-        ))
-    }
-
-    fn tuple_variant<V: Visitor<'de>>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error> {
-        Err(SerdeError::UnsupportedType(
-            "tuple variants are not supported".into(),
-        ))
-    }
-
-    fn struct_variant<V: Visitor<'de>>(
-        self,
-        _fields: &'static [&'static str],
-        _visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        Err(SerdeError::UnsupportedType(
-            "struct variants are not supported".into(),
-        ))
-    }
+    fn unit_variant(self) -> Result<(), Self::Error> { Ok(()) }
+    fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, _: T) -> Result<T::Value, Self::Error> { Err(SerdeError::UnsupportedType("newtype variant".into())) }
+    fn tuple_variant<V: Visitor<'de>>(self, _: usize, _: V) -> Result<V::Value, Self::Error> { Err(SerdeError::UnsupportedType("tuple variant".into())) }
+    fn struct_variant<V: Visitor<'de>>(self, _: &'static [&'static str], _: V) -> Result<V::Value, Self::Error> { Err(SerdeError::UnsupportedType("struct variant".into())) }
 }

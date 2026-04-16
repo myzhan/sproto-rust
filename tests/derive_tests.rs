@@ -101,3 +101,160 @@ fn test_derive_non_contiguous_tags() {
     let decoded = NonContiguousTags::sproto_decode(&bytes).unwrap();
     assert_eq!(obj, decoded);
 }
+
+// ============================================================================
+// Nested struct and Vec<Struct> tests
+// ============================================================================
+
+#[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+struct PhoneNumber {
+    #[sproto(tag = 0)]
+    number: String,
+    #[sproto(tag = 1)]
+    phone_type: i64,
+}
+
+#[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+struct Contact {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    id: i64,
+    #[sproto(tag = 2)]
+    phones: Vec<PhoneNumber>,
+}
+
+#[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+struct AddressBook {
+    #[sproto(tag = 0)]
+    contacts: Vec<Contact>,
+}
+
+#[test]
+fn test_derive_nested_struct() {
+    let contact = Contact {
+        name: "Alice".into(),
+        id: 10000,
+        phones: vec![
+            PhoneNumber {
+                number: "123456789".into(),
+                phone_type: 1,
+            },
+            PhoneNumber {
+                number: "987654321".into(),
+                phone_type: 2,
+            },
+        ],
+    };
+
+    let bytes = contact.sproto_encode().unwrap();
+    let decoded = Contact::sproto_decode(&bytes).unwrap();
+    assert_eq!(contact, decoded);
+}
+
+#[test]
+fn test_derive_nested_struct_array() {
+    let book = AddressBook {
+        contacts: vec![
+            Contact {
+                name: "Alice".into(),
+                id: 10000,
+                phones: vec![
+                    PhoneNumber { number: "111".into(), phone_type: 1 },
+                    PhoneNumber { number: "222".into(), phone_type: 2 },
+                ],
+            },
+            Contact {
+                name: "Bob".into(),
+                id: 20000,
+                phones: vec![
+                    PhoneNumber { number: "333".into(), phone_type: 3 },
+                ],
+            },
+        ],
+    };
+
+    let bytes = book.sproto_encode().unwrap();
+    let decoded = AddressBook::sproto_decode(&bytes).unwrap();
+    assert_eq!(book, decoded);
+}
+
+#[test]
+fn test_derive_nested_empty_array() {
+    let contact = Contact {
+        name: "Empty".into(),
+        id: 1,
+        phones: vec![],
+    };
+
+    let bytes = contact.sproto_encode().unwrap();
+    let decoded = Contact::sproto_decode(&bytes).unwrap();
+    assert_eq!(contact, decoded);
+}
+
+#[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+struct OptionalNested {
+    #[sproto(tag = 0)]
+    label: String,
+    #[sproto(tag = 1)]
+    inner: Option<PhoneNumber>,
+}
+
+#[test]
+fn test_derive_optional_struct_some() {
+    let obj = OptionalNested {
+        label: "test".into(),
+        inner: Some(PhoneNumber {
+            number: "555".into(),
+            phone_type: 1,
+        }),
+    };
+
+    let bytes = obj.sproto_encode().unwrap();
+    let decoded = OptionalNested::sproto_decode(&bytes).unwrap();
+    assert_eq!(obj, decoded);
+}
+
+#[test]
+fn test_derive_optional_struct_none() {
+    let obj = OptionalNested {
+        label: "test".into(),
+        inner: None,
+    };
+
+    let bytes = obj.sproto_encode().unwrap();
+    let decoded = OptionalNested::sproto_decode(&bytes).unwrap();
+    assert_eq!(obj, decoded);
+}
+
+#[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+struct TreeNode {
+    #[sproto(tag = 0)]
+    value: i64,
+    #[sproto(tag = 1)]
+    children: Vec<TreeNode>,
+}
+
+#[test]
+fn test_derive_recursive_struct() {
+    let tree = TreeNode {
+        value: 1,
+        children: vec![
+            TreeNode {
+                value: 2,
+                children: vec![
+                    TreeNode { value: 4, children: vec![] },
+                    TreeNode { value: 5, children: vec![] },
+                ],
+            },
+            TreeNode {
+                value: 3,
+                children: vec![],
+            },
+        ],
+    };
+
+    let bytes = tree.sproto_encode().unwrap();
+    let decoded = TreeNode::sproto_decode(&bytes).unwrap();
+    assert_eq!(tree, decoded);
+}

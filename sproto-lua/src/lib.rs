@@ -18,7 +18,7 @@
 //! local decoded = sp:decode("Person", encoded)
 //! ```
 
-mod conversion;
+mod lua_codec;
 mod error;
 mod userdata;
 

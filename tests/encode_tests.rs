@@ -1,11 +1,10 @@
 //! Cross-validation: encode in Rust and compare bytes with C-generated .bin files.
 
+use serde::{Deserialize, Serialize};
 use sproto::binary_schema;
-use sproto::codec;
-use sproto::value::SprotoValue;
 
 fn testdata(name: &str) -> Vec<u8> {
-    let path = format!("{}/testdata/{}", env!("CARGO_MANIFEST_DIR"), name);
+    let path = format!("{}/tests/testdata/{}", env!("CARGO_MANIFEST_DIR"), name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e))
 }
 
@@ -14,208 +13,207 @@ fn load_person_data_sproto() -> sproto::Sproto {
 }
 
 fn hexdump(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
+    data.iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-// SimpleStruct: Person { name="Alice", age=13, marital=false }
+fn encode<T: Serialize>(sproto: &sproto::Sproto, type_name: &str, value: &T) -> Vec<u8> {
+    let st = sproto.get_type(type_name).unwrap();
+    sproto::serde::to_bytes(sproto, st, value).unwrap()
+}
+
+fn decode<T: for<'de> Deserialize<'de>>(
+    sproto: &sproto::Sproto,
+    type_name: &str,
+    data: &[u8],
+) -> T {
+    let st = sproto.get_type(type_name).unwrap();
+    sproto::serde::from_bytes(sproto, st, data).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Serde structs matching the person_data binary schema
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct Person {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    age: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    marital: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    children: Option<Vec<Person>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct Data {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    numbers: Option<Vec<i64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bools: Option<Vec<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    number: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bignumber: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    double: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doubles: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fpn: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
+// Binary schema cross-validation tests
+// ---------------------------------------------------------------------------
+
 #[test]
 fn test_encode_simple_struct() {
     let sproto = load_person_data_sproto();
-    let person_type = sproto.get_type("Person").unwrap();
-
-    let value = SprotoValue::from_fields(vec![
-        ("name", "Alice".into()),
-        ("age", 13i64.into()),
-        ("marital", false.into()),
-    ]);
-
-    let encoded = codec::encode(&sproto, person_type, &value).unwrap();
-    let expected = testdata("example1_encoded.bin");
-
-    assert_eq!(
-        hexdump(&encoded),
-        hexdump(&expected),
-        "example1 encode mismatch"
-    );
+    let value = Person {
+        name: Some("Alice".into()),
+        age: Some(13),
+        marital: Some(false),
+        children: None,
+    };
+    let encoded = encode(&sproto, "Person", &value);
+    let expected = testdata("simple_struct_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&expected), "simple_struct encode mismatch");
 }
 
-// StructArray: Person with children
 #[test]
 fn test_encode_struct_array() {
     let sproto = load_person_data_sproto();
-    let person_type = sproto.get_type("Person").unwrap();
-
-    let value = SprotoValue::from_fields(vec![
-        ("name", "Bob".into()),
-        ("age", 40i64.into()),
-        (
-            "children",
-            SprotoValue::Array(vec![
-                SprotoValue::from_fields(vec![
-                    ("name", "Alice".into()),
-                    ("age", 13i64.into()),
-                ]),
-                SprotoValue::from_fields(vec![
-                    ("name", "Carol".into()),
-                    ("age", 5i64.into()),
-                ]),
-            ]),
-        ),
-    ]);
-
-    let encoded = codec::encode(&sproto, person_type, &value).unwrap();
-    let expected = testdata("example2_encoded.bin");
-
-    assert_eq!(
-        hexdump(&encoded),
-        hexdump(&expected),
-        "example2 encode mismatch"
-    );
+    let value = Person {
+        name: Some("Bob".into()),
+        age: Some(40),
+        marital: None,
+        children: Some(vec![
+            Person {
+                name: Some("Alice".into()),
+                age: Some(13),
+                marital: None,
+                children: None,
+            },
+            Person {
+                name: Some("Carol".into()),
+                age: Some(5),
+                marital: None,
+                children: None,
+            },
+        ]),
+    };
+    let encoded = encode(&sproto, "Person", &value);
+    let expected = testdata("struct_array_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&expected), "struct_array encode mismatch");
 }
 
-// NumberArray: Data { numbers=[1,2,3,4,5] }
 #[test]
 fn test_encode_number_array() {
     let sproto = load_person_data_sproto();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    let value = SprotoValue::from_fields(vec![(
-        "numbers",
-        SprotoValue::Array(
-            (1..=5).map(|i| SprotoValue::Integer(i)).collect(),
-        ),
-    )]);
-
-    let encoded = codec::encode(&sproto, data_type, &value).unwrap();
-    let expected = testdata("example3_encoded.bin");
-
-    assert_eq!(
-        hexdump(&encoded),
-        hexdump(&expected),
-        "example3 encode mismatch"
-    );
+    let value = Data {
+        numbers: Some(vec![1, 2, 3, 4, 5]),
+        bools: None,
+        number: None,
+        bignumber: None,
+        double: None,
+        doubles: None,
+        fpn: None,
+    };
+    let encoded = encode(&sproto, "Data", &value);
+    let expected = testdata("number_array_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&expected), "number_array encode mismatch");
 }
 
-// BigNumberArray: Data { numbers=[(1<<32)+1, (1<<32)+2, (1<<32)+3] }
 #[test]
 fn test_encode_big_number_array() {
     let sproto = load_person_data_sproto();
-    let data_type = sproto.get_type("Data").unwrap();
-
     let base: i64 = 1 << 32;
-    let value = SprotoValue::from_fields(vec![(
-        "numbers",
-        SprotoValue::Array(vec![
-            SprotoValue::Integer(base + 1),
-            SprotoValue::Integer(base + 2),
-            SprotoValue::Integer(base + 3),
-        ]),
-    )]);
-
-    let encoded = codec::encode(&sproto, data_type, &value).unwrap();
-    let expected = testdata("example4_encoded.bin");
-
-    assert_eq!(
-        hexdump(&encoded),
-        hexdump(&expected),
-        "example4 encode mismatch"
-    );
+    let value = Data {
+        numbers: Some(vec![base + 1, base + 2, base + 3]),
+        bools: None,
+        number: None,
+        bignumber: None,
+        double: None,
+        doubles: None,
+        fpn: None,
+    };
+    let encoded = encode(&sproto, "Data", &value);
+    let expected = testdata("big_number_array_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&expected), "big_number_array encode mismatch");
 }
 
-// BoolArray: Data { bools=[false, true, false] }
 #[test]
 fn test_encode_bool_array() {
     let sproto = load_person_data_sproto();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    let value = SprotoValue::from_fields(vec![(
-        "bools",
-        SprotoValue::Array(vec![
-            SprotoValue::Boolean(false),
-            SprotoValue::Boolean(true),
-            SprotoValue::Boolean(false),
-        ]),
-    )]);
-
-    let encoded = codec::encode(&sproto, data_type, &value).unwrap();
-    let expected = testdata("example5_encoded.bin");
-
-    assert_eq!(
-        hexdump(&encoded),
-        hexdump(&expected),
-        "example5 encode mismatch"
-    );
+    let value = Data {
+        numbers: None,
+        bools: Some(vec![false, true, false]),
+        number: None,
+        bignumber: None,
+        double: None,
+        doubles: None,
+        fpn: None,
+    };
+    let encoded = encode(&sproto, "Data", &value);
+    let expected = testdata("bool_array_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&expected), "bool_array encode mismatch");
 }
 
-// Number: Data { number=100000, bignumber=-10000000000 }
 #[test]
 fn test_encode_number() {
     let sproto = load_person_data_sproto();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    let value = SprotoValue::from_fields(vec![
-        ("number", SprotoValue::Integer(100000)),
-        ("bignumber", SprotoValue::Integer(-10000000000)),
-    ]);
-
-    let encoded = codec::encode(&sproto, data_type, &value).unwrap();
-    let expected = testdata("example6_encoded.bin");
-
-    assert_eq!(
-        hexdump(&encoded),
-        hexdump(&expected),
-        "example6 encode mismatch"
-    );
+    let value = Data {
+        numbers: None,
+        bools: None,
+        number: Some(100000),
+        bignumber: Some(-10000000000),
+        double: None,
+        doubles: None,
+        fpn: None,
+    };
+    let encoded = encode(&sproto, "Data", &value);
+    let expected = testdata("number_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&expected), "number encode mismatch");
 }
 
-// Double: Data { double=0.01171875, doubles=[0.01171875, 23, 4] }
 #[test]
 fn test_encode_double() {
     let sproto = load_person_data_sproto();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    let value = SprotoValue::from_fields(vec![
-        ("double", SprotoValue::Double(0.01171875)),
-        (
-            "doubles",
-            SprotoValue::Array(vec![
-                SprotoValue::Double(0.01171875),
-                SprotoValue::Double(23.0),
-                SprotoValue::Double(4.0),
-            ]),
-        ),
-    ]);
-
-    let encoded = codec::encode(&sproto, data_type, &value).unwrap();
-    let expected = testdata("example7_encoded.bin");
-
-    assert_eq!(
-        hexdump(&encoded),
-        hexdump(&expected),
-        "example7 encode mismatch"
-    );
+    let value = Data {
+        numbers: None,
+        bools: None,
+        number: None,
+        bignumber: None,
+        double: Some(0.01171875),
+        doubles: Some(vec![0.01171875, 23.0, 4.0]),
+        fpn: None,
+    };
+    let encoded = encode(&sproto, "Data", &value);
+    let expected = testdata("double_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&expected), "double encode mismatch");
 }
 
-// FixedPoint: Data { fpn=1.82 } -- integer(2), encoded as 182
 #[test]
 fn test_encode_fixed_point() {
     let sproto = load_person_data_sproto();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    // fpn is integer(2), the C/Lua encoder receives 1.82 and multiplies by 100 -> 182
-    // We pass the already-scaled integer value since our API is dynamic
-    let value = SprotoValue::from_fields(vec![
-        ("fpn", SprotoValue::Integer(182)),
-    ]);
-
-    let encoded = codec::encode(&sproto, data_type, &value).unwrap();
-    let expected = testdata("example8_encoded.bin");
-
-    assert_eq!(
-        hexdump(&encoded),
-        hexdump(&expected),
-        "example8 encode mismatch"
-    );
+    // fpn is integer(2): 1.82 * 100 = 182 (pre-scaled)
+    let value = Data {
+        numbers: None,
+        bools: None,
+        number: None,
+        bignumber: None,
+        double: None,
+        doubles: None,
+        fpn: Some(182),
+    };
+    let encoded = encode(&sproto, "Data", &value);
+    let expected = testdata("fixed_point_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&expected), "fixed_point encode mismatch");
 }
 
 // =============================================================================
@@ -261,36 +259,89 @@ fn go_addressbook_schema() -> sproto::Sproto {
     .unwrap()
 }
 
-/// Bytes: Data{Bytes:[0x28,0x29,0x30,0x31]}
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct GoData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    numbers: Option<Vec<i64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bools: Option<Vec<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    number: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bignumber: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    double: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    doubles: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strings: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none", with = "opt_bytes")]
+    bytes: Option<Vec<u8>>,
+}
+
+/// Custom serializer for Option<Vec<u8>> that uses serde_bytes when Some.
+mod opt_bytes {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(val: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        match val {
+            Some(b) => serde_bytes::serialize(b, s),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        Ok(Some(serde_bytes::deserialize(d)?))
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct PhoneNumber {
+    number: String,
+    r#type: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct GoPerson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phone: Option<Vec<PhoneNumber>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct AddressBook {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    person: Option<Vec<GoPerson>>,
+}
+
+/// Bytes: Data{bytes:[0x28,0x29,0x30,0x31]}
 const GO_BYTES_FIELD: &[u8] = &[
-    0x02, 0x00, // fn = 2
-    0x0f, 0x00, // skip to id = 8
-    0x00, 0x00, // id = 8, value in data part
-    0x04, 0x00, 0x00, 0x00, // sizeof bytes
-    0x28, 0x29, 0x30, 0x31,
+    0x02, 0x00, 0x0f, 0x00, 0x00, 0x00,
+    0x04, 0x00, 0x00, 0x00, 0x28, 0x29, 0x30, 0x31,
 ];
 
-/// StringArray: Data{Strings:["Bob","Alice","Carol"]}
+/// StringArray: Data{strings:["Bob","Alice","Carol"]}
 const GO_STRING_ARRAY: &[u8] = &[
-    0x02, 0x00, // fn = 2
-    0x0d, 0x00, // skip to id = 7
-    0x00, 0x00, // id = 7, value in data part
-    0x19, 0x00, 0x00, 0x00, // sizeof []string
-    0x03, 0x00, 0x00, 0x00, 0x42, 0x6F, 0x62, // "Bob"
-    0x05, 0x00, 0x00, 0x00, 0x41, 0x6C, 0x69, 0x63, 0x65, // "Alice"
-    0x05, 0x00, 0x00, 0x00, 0x43, 0x61, 0x72, 0x6F, 0x6C, // "Carol"
+    0x02, 0x00, 0x0d, 0x00, 0x00, 0x00,
+    0x19, 0x00, 0x00, 0x00,
+    0x03, 0x00, 0x00, 0x00, 0x42, 0x6F, 0x62,
+    0x05, 0x00, 0x00, 0x00, 0x41, 0x6C, 0x69, 0x63, 0x65,
+    0x05, 0x00, 0x00, 0x00, 0x43, 0x61, 0x72, 0x6F, 0x6C,
 ];
 
-/// EmptyIntSlice: Data{Numbers:[]}
+/// EmptyIntSlice: Data{numbers:[]}
 const GO_EMPTY_INT_SLICE: &[u8] = &[
     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-/// EmptyDoubleSlice: Data{Doubles:[]}
+/// EmptyDoubleSlice: Data{doubles:[]}
 const GO_EMPTY_DOUBLE_SLICE: &[u8] = &[
-    0x02, 0x00, // fn = 2
-    0x09, 0x00, // skip id = 4
-    0x00, 0x00, // id = 5, value in data part
+    0x02, 0x00, 0x09, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00,
 ];
 
@@ -306,117 +357,110 @@ const GO_ADDRESSBOOK: &[u8] = &[
 #[test]
 fn test_encode_bytes_field() {
     let schema = go_data_schema();
-    let st = schema.get_type("Data").unwrap();
-    let value = SprotoValue::from_fields(vec![(
-        "bytes",
-        SprotoValue::Binary(vec![0x28, 0x29, 0x30, 0x31]),
-    )]);
-    let encoded = codec::encode(&schema, st, &value).unwrap();
+    let value = GoData {
+        numbers: None, bools: None, number: None, bignumber: None,
+        double: None, doubles: None, strings: None,
+        bytes: Some(vec![0x28, 0x29, 0x30, 0x31]),
+    };
+    let encoded = encode(&schema, "Data", &value);
     assert_eq!(hexdump(&encoded), hexdump(GO_BYTES_FIELD));
 }
 
 #[test]
 fn test_encode_string_array() {
     let schema = go_data_schema();
-    let st = schema.get_type("Data").unwrap();
-    let value = SprotoValue::from_fields(vec![(
-        "strings",
-        SprotoValue::Array(vec![
-            SprotoValue::Str("Bob".into()),
-            SprotoValue::Str("Alice".into()),
-            SprotoValue::Str("Carol".into()),
-        ]),
-    )]);
-    let encoded = codec::encode(&schema, st, &value).unwrap();
+    let value = GoData {
+        numbers: None, bools: None, number: None, bignumber: None,
+        double: None, doubles: None,
+        strings: Some(vec!["Bob".into(), "Alice".into(), "Carol".into()]),
+        bytes: None,
+    };
+    let encoded = encode(&schema, "Data", &value);
     assert_eq!(hexdump(&encoded), hexdump(GO_STRING_ARRAY));
 }
 
 #[test]
 fn test_encode_empty_int_slice() {
     let schema = go_data_schema();
-    let st = schema.get_type("Data").unwrap();
-    let value = SprotoValue::from_fields(vec![("numbers", SprotoValue::Array(vec![]))]);
-    let encoded = codec::encode(&schema, st, &value).unwrap();
+    let value = GoData {
+        numbers: Some(vec![]),
+        bools: None, number: None, bignumber: None,
+        double: None, doubles: None, strings: None, bytes: None,
+    };
+    let encoded = encode(&schema, "Data", &value);
     assert_eq!(hexdump(&encoded), hexdump(GO_EMPTY_INT_SLICE));
 }
 
 #[test]
 fn test_encode_empty_double_slice() {
     let schema = go_data_schema();
-    let st = schema.get_type("Data").unwrap();
-    let value = SprotoValue::from_fields(vec![("doubles", SprotoValue::Array(vec![]))]);
-    let encoded = codec::encode(&schema, st, &value).unwrap();
+    let value = GoData {
+        numbers: None, bools: None, number: None, bignumber: None,
+        double: None,
+        doubles: Some(vec![]),
+        strings: None, bytes: None,
+    };
+    let encoded = encode(&schema, "Data", &value);
     assert_eq!(hexdump(&encoded), hexdump(GO_EMPTY_DOUBLE_SLICE));
 }
 
 #[test]
 fn test_encode_addressbook() {
     let schema = go_addressbook_schema();
-    let st = schema.get_type("AddressBook").unwrap();
-    let value = SprotoValue::from_fields(vec![(
-        "person",
-        SprotoValue::Array(vec![
-            SprotoValue::from_fields(vec![
-                ("name", "Alice".into()),
-                ("id", 10000i64.into()),
-                (
-                    "phone",
-                    SprotoValue::Array(vec![
-                        SprotoValue::from_fields(vec![
-                            ("number", SprotoValue::Str("123456789".into())),
-                            ("type", SprotoValue::Integer(1)),
-                        ]),
-                        SprotoValue::from_fields(vec![
-                            ("number", SprotoValue::Str("87654321".into())),
-                            ("type", SprotoValue::Integer(2)),
-                        ]),
-                    ]),
-                ),
-            ]),
-            SprotoValue::from_fields(vec![
-                ("name", "Bob".into()),
-                ("id", 20000i64.into()),
-                (
-                    "phone",
-                    SprotoValue::Array(vec![SprotoValue::from_fields(vec![
-                        ("number", SprotoValue::Str("01234567890".into())),
-                        ("type", SprotoValue::Integer(3)),
-                    ])]),
-                ),
-            ]),
+    let value = AddressBook {
+        person: Some(vec![
+            GoPerson {
+                name: Some("Alice".into()),
+                id: Some(10000),
+                email: None,
+                phone: Some(vec![
+                    PhoneNumber { number: "123456789".into(), r#type: 1 },
+                    PhoneNumber { number: "87654321".into(), r#type: 2 },
+                ]),
+            },
+            GoPerson {
+                name: Some("Bob".into()),
+                id: Some(20000),
+                email: None,
+                phone: Some(vec![
+                    PhoneNumber { number: "01234567890".into(), r#type: 3 },
+                ]),
+            },
         ]),
-    )]);
-    let encoded = codec::encode(&schema, st, &value).unwrap();
+    };
+    let encoded = encode(&schema, "AddressBook", &value);
     assert_eq!(hexdump(&encoded), hexdump(GO_ADDRESSBOOK));
 }
 
-// Full round-trip: decode binary -> re-encode -> assert identical bytes
+// Round-trip: decode binary -> re-encode -> assert identical bytes
 #[test]
 fn test_encode_decode_roundtrip_all() {
     let sproto = load_person_data_sproto();
-
     let cases: Vec<(&str, &str)> = vec![
-        ("Person", "example1_encoded.bin"),
-        ("Person", "example2_encoded.bin"),
-        ("Data", "example3_encoded.bin"),
-        ("Data", "example4_encoded.bin"),
-        ("Data", "example5_encoded.bin"),
-        ("Data", "example6_encoded.bin"),
-        ("Data", "example7_encoded.bin"),
-        ("Data", "example8_encoded.bin"),
+        ("Person", "simple_struct_encoded.bin"),
+        ("Person", "struct_array_encoded.bin"),
+        ("Data", "number_array_encoded.bin"),
+        ("Data", "big_number_array_encoded.bin"),
+        ("Data", "bool_array_encoded.bin"),
+        ("Data", "number_encoded.bin"),
+        ("Data", "double_encoded.bin"),
+        ("Data", "fixed_point_encoded.bin"),
     ];
 
     for (type_name, file) in cases {
-        let st = sproto.get_type(type_name).unwrap();
         let original = testdata(file);
-        let decoded = codec::decode(&sproto, st, &original).unwrap();
-        let reencoded = codec::encode(&sproto, st, &decoded).unwrap();
-
-        assert_eq!(
-            hexdump(&reencoded),
-            hexdump(&original),
-            "round-trip failed for {}",
-            file
-        );
+        match type_name {
+            "Person" => {
+                let decoded: Person = decode(&sproto, type_name, &original);
+                let reencoded = encode(&sproto, type_name, &decoded);
+                assert_eq!(hexdump(&reencoded), hexdump(&original), "round-trip failed for {}", file);
+            }
+            "Data" => {
+                let decoded: Data = decode(&sproto, type_name, &original);
+                let reencoded = encode(&sproto, type_name, &decoded);
+                assert_eq!(hexdump(&reencoded), hexdump(&original), "round-trip failed for {}", file);
+            }
+            _ => unreachable!(),
+        }
     }
 }

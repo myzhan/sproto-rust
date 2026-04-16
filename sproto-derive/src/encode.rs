@@ -1,7 +1,7 @@
 //! Code generation for SprotoEncode derive macro.
 //!
 //! This module generates optimized inline encoding code that directly writes
-//! to bytes without constructing intermediate SprotoValue or Schema objects.
+//! to a shared output buffer without intermediate allocations for nested structs.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -107,7 +107,7 @@ pub fn derive_encode(input: &DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         impl ::sproto::SprotoEncode for #name {
-            fn sproto_encode(&self) -> ::std::result::Result<::std::vec::Vec<u8>, ::sproto::error::EncodeError> {
+            fn sproto_encode_to(&self, __sproto_out: &mut ::std::vec::Vec<u8>) -> ::std::result::Result<(), ::sproto::error::EncodeError> {
                 // Constants for wire format
                 const SIZEOF_HEADER: usize = 2;
                 const SIZEOF_FIELD: usize = 2;
@@ -126,30 +126,31 @@ pub fn derive_encode(input: &DeriveInput) -> Result<TokenStream> {
                     buf[..4].copy_from_slice(&bytes);
                 }
 
-                #[inline]
-                fn write_u64_le(buf: &mut [u8], val: u64) {
-                    let bytes = val.to_le_bytes();
-                    buf[..8].copy_from_slice(&bytes);
-                }
+                let __sproto_start = __sproto_out.len();
 
-                // Pre-allocate header buffer
-                let header_sz = SIZEOF_HEADER + #maxn * SIZEOF_FIELD;
-                let mut header = vec![0u8; header_sz];
-                let mut data_part: Vec<u8> = Vec::new();
+                // Pre-allocate header space in the shared buffer
+                let __sproto_header_sz = SIZEOF_HEADER + #maxn * SIZEOF_FIELD;
+                __sproto_out.resize(__sproto_start + __sproto_header_sz, 0);
                 let mut index = 0usize;
                 let mut last_tag: i32 = -1;
 
                 #(#field_encode_blocks)*
 
                 // Write field count
-                write_u16_le(&mut header[0..], index as u16);
+                write_u16_le(&mut __sproto_out[__sproto_start..], index as u16);
 
-                // Compact header and combine with data
-                let used_header = SIZEOF_HEADER + index * SIZEOF_FIELD;
-                header.truncate(used_header);
-                header.extend_from_slice(&data_part);
+                // Compact header if not all slots were used
+                let __sproto_used_header = SIZEOF_HEADER + index * SIZEOF_FIELD;
+                if __sproto_used_header < __sproto_header_sz {
+                    let __sproto_data_start = __sproto_start + __sproto_header_sz;
+                    let __sproto_total = __sproto_out.len();
+                    let __sproto_data_len = __sproto_total - __sproto_data_start;
+                    let __sproto_new_data_start = __sproto_start + __sproto_used_header;
+                    __sproto_out.copy_within(__sproto_data_start..__sproto_total, __sproto_new_data_start);
+                    __sproto_out.truncate(__sproto_new_data_start + __sproto_data_len);
+                }
 
-                Ok(header)
+                Ok(())
             }
         }
     })
@@ -163,6 +164,7 @@ enum FieldTypeInfo {
     Double,
     String,
     Binary,
+    Struct,
 }
 
 /// Analyze a type to determine if it's Option<T> or Vec<T>, returning inner type.
@@ -224,11 +226,11 @@ fn rust_type_to_field_type_info(ty: &Type) -> FieldTypeInfo {
                     }
                     FieldTypeInfo::Integer
                 }
-                _ => FieldTypeInfo::String,
+                _ => FieldTypeInfo::Struct,
             };
         }
     }
-    FieldTypeInfo::String
+    FieldTypeInfo::Struct
 }
 
 /// Generate encoding blocks for each field
@@ -255,14 +257,14 @@ fn generate_field_encode_blocks(sorted_fields: &[&(FieldInfo, FieldTypeInfo)]) -
                         let tag_gap = #tag - last_tag - 1;
                         if tag_gap > 0 {
                             let skip = ((tag_gap - 1) * 2 + 1) as u16;
-                            let offset = SIZEOF_HEADER + SIZEOF_FIELD * index;
-                            write_u16_le(&mut header[offset..], skip);
+                            let offset = __sproto_start + SIZEOF_HEADER + SIZEOF_FIELD * index;
+                            write_u16_le(&mut __sproto_out[offset..], skip);
                             index += 1;
                         }
 
                         // Write field descriptor
-                        let offset = SIZEOF_HEADER + SIZEOF_FIELD * index;
-                        write_u16_le(&mut header[offset..], inline_value);
+                        let offset = __sproto_start + SIZEOF_HEADER + SIZEOF_FIELD * index;
+                        write_u16_le(&mut __sproto_out[offset..], inline_value);
                         index += 1;
                         last_tag = #tag;
                     }
@@ -279,7 +281,7 @@ fn generate_scalar_encode(ident: &syn::Ident, is_optional: bool, field_type: Fie
             let int_val = *val as i64;
             let uint_val = int_val as u64;
             let u32_val = uint_val as u32;
-            
+
             // Try inline for small positive values
             if uint_val == u32_val as u64 && u32_val < 0x7fff {
                 inline_value = ((u32_val + 1) * 2) as u16;
@@ -287,15 +289,11 @@ fn generate_scalar_encode(ident: &syn::Ident, is_optional: bool, field_type: Fie
                 // Check if fits in 32 bits
                 let i32_check = int_val as i32;
                 if i32_check as i64 == int_val {
-                    let mut buf = vec![0u8; SIZEOF_LENGTH + 4];
-                    write_u32_le(&mut buf[0..], 4);
-                    write_u32_le(&mut buf[SIZEOF_LENGTH..], int_val as u32);
-                    data_part.extend_from_slice(&buf);
+                    __sproto_out.extend_from_slice(&4u32.to_le_bytes());
+                    __sproto_out.extend_from_slice(&(int_val as u32).to_le_bytes());
                 } else {
-                    let mut buf = vec![0u8; SIZEOF_LENGTH + 8];
-                    write_u32_le(&mut buf[0..], 8);
-                    write_u64_le(&mut buf[SIZEOF_LENGTH..], uint_val);
-                    data_part.extend_from_slice(&buf);
+                    __sproto_out.extend_from_slice(&8u32.to_le_bytes());
+                    __sproto_out.extend_from_slice(&uint_val.to_le_bytes());
                 }
             }
             has_value = true;
@@ -307,26 +305,28 @@ fn generate_scalar_encode(ident: &syn::Ident, is_optional: bool, field_type: Fie
         },
         FieldTypeInfo::Double => quote! {
             let bits = (*val).to_bits();
-            let mut buf = vec![0u8; SIZEOF_LENGTH + 8];
-            write_u32_le(&mut buf[0..], 8);
-            write_u64_le(&mut buf[SIZEOF_LENGTH..], bits);
-            data_part.extend_from_slice(&buf);
+            __sproto_out.extend_from_slice(&8u32.to_le_bytes());
+            __sproto_out.extend_from_slice(&bits.to_le_bytes());
             has_value = true;
         },
         FieldTypeInfo::String => quote! {
             let s = val.as_bytes();
-            let mut buf = vec![0u8; SIZEOF_LENGTH + s.len()];
-            write_u32_le(&mut buf[0..], s.len() as u32);
-            buf[SIZEOF_LENGTH..].copy_from_slice(s);
-            data_part.extend_from_slice(&buf);
+            __sproto_out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            __sproto_out.extend_from_slice(s);
             has_value = true;
         },
         FieldTypeInfo::Binary => quote! {
             let b = val.as_slice();
-            let mut buf = vec![0u8; SIZEOF_LENGTH + b.len()];
-            write_u32_le(&mut buf[0..], b.len() as u32);
-            buf[SIZEOF_LENGTH..].copy_from_slice(b);
-            data_part.extend_from_slice(&buf);
+            __sproto_out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            __sproto_out.extend_from_slice(b);
+            has_value = true;
+        },
+        FieldTypeInfo::Struct => quote! {
+            let __len_pos = __sproto_out.len();
+            __sproto_out.extend_from_slice(&[0u8; SIZEOF_LENGTH]);
+            ::sproto::SprotoEncode::sproto_encode_to(val, __sproto_out)?;
+            let __encoded_len = (__sproto_out.len() - __len_pos - SIZEOF_LENGTH) as u32;
+            write_u32_le(&mut __sproto_out[__len_pos..], __encoded_len);
             has_value = true;
         },
     };
@@ -356,10 +356,7 @@ fn generate_array_encode(ident: &syn::Ident, is_optional: bool, field_type: Fiel
     let encode_array = match field_type {
         FieldTypeInfo::Integer => quote! {
             if arr.is_empty() {
-                // Empty array
-                let mut buf = vec![0u8; SIZEOF_LENGTH];
-                write_u32_le(&mut buf[0..], 0);
-                data_part.extend_from_slice(&buf);
+                __sproto_out.extend_from_slice(&0u32.to_le_bytes());
             } else {
                 // Check if we need 64-bit
                 let mut need_64bit = false;
@@ -370,85 +367,80 @@ fn generate_array_encode(ident: &syn::Ident, is_optional: bool, field_type: Fiel
                         break;
                     }
                 }
-                
+
                 let int_size = if need_64bit { 8usize } else { 4usize };
                 let data_len = 1 + arr.len() * int_size;
-                let mut buf = vec![0u8; SIZEOF_LENGTH + data_len];
-                write_u32_le(&mut buf[0..], data_len as u32);
-                buf[SIZEOF_LENGTH] = int_size as u8;
-                
-                let mut offset = SIZEOF_LENGTH + 1;
+                __sproto_out.extend_from_slice(&(data_len as u32).to_le_bytes());
+                __sproto_out.push(int_size as u8);
+
                 for &v in arr.iter() {
                     if need_64bit {
-                        write_u64_le(&mut buf[offset..], v as i64 as u64);
-                        offset += 8;
+                        __sproto_out.extend_from_slice(&(v as i64 as u64).to_le_bytes());
                     } else {
-                        write_u32_le(&mut buf[offset..], v as i64 as u32);
-                        offset += 4;
+                        __sproto_out.extend_from_slice(&(v as i64 as u32).to_le_bytes());
                     }
                 }
-                data_part.extend_from_slice(&buf);
             }
             has_value = true;
         },
         FieldTypeInfo::Boolean => quote! {
             let data_len = arr.len();
-            let mut buf = vec![0u8; SIZEOF_LENGTH + data_len];
-            write_u32_le(&mut buf[0..], data_len as u32);
-            for (i, &v) in arr.iter().enumerate() {
-                buf[SIZEOF_LENGTH + i] = if v { 1 } else { 0 };
+            __sproto_out.extend_from_slice(&(data_len as u32).to_le_bytes());
+            for &v in arr.iter() {
+                __sproto_out.push(if v { 1 } else { 0 });
             }
-            data_part.extend_from_slice(&buf);
             has_value = true;
         },
         FieldTypeInfo::Double => quote! {
             if arr.is_empty() {
-                let mut buf = vec![0u8; SIZEOF_LENGTH];
-                write_u32_le(&mut buf[0..], 0);
-                data_part.extend_from_slice(&buf);
+                __sproto_out.extend_from_slice(&0u32.to_le_bytes());
             } else {
                 let int_size = 8usize;
                 let data_len = 1 + arr.len() * int_size;
-                let mut buf = vec![0u8; SIZEOF_LENGTH + data_len];
-                write_u32_le(&mut buf[0..], data_len as u32);
-                buf[SIZEOF_LENGTH] = int_size as u8;
-                
-                let mut offset = SIZEOF_LENGTH + 1;
+                __sproto_out.extend_from_slice(&(data_len as u32).to_le_bytes());
+                __sproto_out.push(int_size as u8);
+
                 for &v in arr.iter() {
-                    write_u64_le(&mut buf[offset..], v.to_bits());
-                    offset += 8;
+                    __sproto_out.extend_from_slice(&v.to_bits().to_le_bytes());
                 }
-                data_part.extend_from_slice(&buf);
             }
             has_value = true;
         },
         FieldTypeInfo::String => quote! {
-            let mut inner = Vec::new();
+            let __outer_pos = __sproto_out.len();
+            __sproto_out.extend_from_slice(&[0u8; SIZEOF_LENGTH]);
             for s in arr.iter() {
                 let bytes = s.as_bytes();
-                let mut elem_buf = vec![0u8; SIZEOF_LENGTH + bytes.len()];
-                write_u32_le(&mut elem_buf[0..], bytes.len() as u32);
-                elem_buf[SIZEOF_LENGTH..].copy_from_slice(bytes);
-                inner.extend_from_slice(&elem_buf);
+                __sproto_out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                __sproto_out.extend_from_slice(bytes);
             }
-            let mut buf = vec![0u8; SIZEOF_LENGTH + inner.len()];
-            write_u32_le(&mut buf[0..], inner.len() as u32);
-            buf[SIZEOF_LENGTH..].copy_from_slice(&inner);
-            data_part.extend_from_slice(&buf);
+            let __outer_len = (__sproto_out.len() - __outer_pos - SIZEOF_LENGTH) as u32;
+            write_u32_le(&mut __sproto_out[__outer_pos..], __outer_len);
             has_value = true;
         },
         FieldTypeInfo::Binary => quote! {
-            let mut inner = Vec::new();
+            let __outer_pos = __sproto_out.len();
+            __sproto_out.extend_from_slice(&[0u8; SIZEOF_LENGTH]);
             for b in arr.iter() {
-                let mut elem_buf = vec![0u8; SIZEOF_LENGTH + b.len()];
-                write_u32_le(&mut elem_buf[0..], b.len() as u32);
-                elem_buf[SIZEOF_LENGTH..].copy_from_slice(b);
-                inner.extend_from_slice(&elem_buf);
+                __sproto_out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                __sproto_out.extend_from_slice(b);
             }
-            let mut buf = vec![0u8; SIZEOF_LENGTH + inner.len()];
-            write_u32_le(&mut buf[0..], inner.len() as u32);
-            buf[SIZEOF_LENGTH..].copy_from_slice(&inner);
-            data_part.extend_from_slice(&buf);
+            let __outer_len = (__sproto_out.len() - __outer_pos - SIZEOF_LENGTH) as u32;
+            write_u32_le(&mut __sproto_out[__outer_pos..], __outer_len);
+            has_value = true;
+        },
+        FieldTypeInfo::Struct => quote! {
+            let __outer_pos = __sproto_out.len();
+            __sproto_out.extend_from_slice(&[0u8; SIZEOF_LENGTH]);
+            for elem in arr.iter() {
+                let __elem_pos = __sproto_out.len();
+                __sproto_out.extend_from_slice(&[0u8; SIZEOF_LENGTH]);
+                ::sproto::SprotoEncode::sproto_encode_to(elem, __sproto_out)?;
+                let __elem_len = (__sproto_out.len() - __elem_pos - SIZEOF_LENGTH) as u32;
+                write_u32_le(&mut __sproto_out[__elem_pos..], __elem_len);
+            }
+            let __outer_len = (__sproto_out.len() - __outer_pos - SIZEOF_LENGTH) as u32;
+            write_u32_le(&mut __sproto_out[__outer_pos..], __outer_len);
             has_value = true;
         },
     };

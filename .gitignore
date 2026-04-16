@@ -8,6 +8,7 @@
 # IDE and editor files
 .idea/
 .vscode/
+.qoder/
 *.swp
 *.swo
 *~

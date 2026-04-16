@@ -3,7 +3,7 @@
 use sproto::pack;
 
 fn testdata(name: &str) -> Vec<u8> {
-    let path = format!("{}/testdata/{}", env!("CARGO_MANIFEST_DIR"), name);
+    let path = format!("{}/tests/testdata/{}", env!("CARGO_MANIFEST_DIR"), name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e))
 }
 
@@ -48,14 +48,14 @@ macro_rules! pack_test {
     };
 }
 
-pack_test!(test_pack_simple_struct, test_unpack_simple_struct, "example1_encoded.bin", "example1_packed.bin");
-pack_test!(test_pack_struct_array, test_unpack_struct_array, "example2_encoded.bin", "example2_packed.bin");
-pack_test!(test_pack_number_array, test_unpack_number_array, "example3_encoded.bin", "example3_packed.bin");
-pack_test!(test_pack_big_number_array, test_unpack_big_number_array, "example4_encoded.bin", "example4_packed.bin");
-pack_test!(test_pack_bool_array, test_unpack_bool_array, "example5_encoded.bin", "example5_packed.bin");
-pack_test!(test_pack_number, test_unpack_number, "example6_encoded.bin", "example6_packed.bin");
-pack_test!(test_pack_double, test_unpack_double, "example7_encoded.bin", "example7_packed.bin");
-pack_test!(test_pack_fixed_point, test_unpack_fixed_point, "example8_encoded.bin", "example8_packed.bin");
+pack_test!(test_pack_simple_struct, test_unpack_simple_struct, "simple_struct_encoded.bin", "simple_struct_packed.bin");
+pack_test!(test_pack_struct_array, test_unpack_struct_array, "struct_array_encoded.bin", "struct_array_packed.bin");
+pack_test!(test_pack_number_array, test_unpack_number_array, "number_array_encoded.bin", "number_array_packed.bin");
+pack_test!(test_pack_big_number_array, test_unpack_big_number_array, "big_number_array_encoded.bin", "big_number_array_packed.bin");
+pack_test!(test_pack_bool_array, test_unpack_bool_array, "bool_array_encoded.bin", "bool_array_packed.bin");
+pack_test!(test_pack_number, test_unpack_number, "number_encoded.bin", "number_packed.bin");
+pack_test!(test_pack_double, test_unpack_double, "double_encoded.bin", "double_packed.bin");
+pack_test!(test_pack_fixed_point, test_unpack_fixed_point, "fixed_point_encoded.bin", "fixed_point_packed.bin");
 
 // Pack/unpack round-trip on addressbook
 #[test]

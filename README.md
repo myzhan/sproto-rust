@@ -8,10 +8,9 @@ Sproto is a compact, schema-driven serialization format designed for simplicity 
 
 - **Schema text parser** - Parse `.sproto` schema definitions at runtime
 - **Binary schema loader** - Load pre-compiled binary schemas from C/Lua toolchain
-- **Encode/Decode** - Serialize and deserialize with dynamic `SprotoValue` API
 - **Pack/Unpack** - Zero-packing compression for wire efficiency
 - **RPC** - Request/response dispatch with session tracking
-- **Serde integration** - Standard `#[derive(Serialize, Deserialize)]` support
+- **Serde integration** - Standard `#[derive(Serialize, Deserialize)]` support with direct struct-to-wire encoding
 - **Derive macros** - `#[derive(SprotoEncode, SprotoDecode)]` for compile-time code generation
 
 ## Installation
@@ -32,33 +31,30 @@ sproto = { version = "0.1", default-features = false }
 
 ## Quick Start
 
-### Using Dynamic Value API
+### Using Serde Integration
 
 ```rust
-use sproto::parser;
-use sproto::value::SprotoValue;
-use sproto::codec;
+use serde::{Serialize, Deserialize};
 
-// Parse schema
-let sproto = parser::parse(r#"
-    .Person {
-        name 0 : string
-        age 1 : integer
-    }
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct Person {
+    name: String,
+    age: i64,
+}
+
+let sproto = sproto::parser::parse(r#"
+    .Person { name 0 : string  age 1 : integer }
 "#).unwrap();
-
 let person_type = sproto.get_type("Person").unwrap();
 
-// Build value
-let value = SprotoValue::from_fields(vec![
-    ("name", "Alice".into()),
-    ("age", 30i64.into()),
-]);
+let person = Person { name: "Alice".into(), age: 30 };
 
-// Encode and decode
-let encoded = codec::encode(&sproto, person_type, &value).unwrap();
-let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-assert_eq!(value, decoded);
+// Serialize to sproto binary
+let bytes = sproto::serde::to_bytes(&sproto, person_type, &person).unwrap();
+
+// Deserialize from sproto binary
+let decoded: Person = sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
+assert_eq!(person, decoded);
 ```
 
 ### Using Derive Macros
@@ -90,40 +86,12 @@ let decoded = Person::sproto_decode(&bytes).unwrap();
 assert_eq!(person, decoded);
 ```
 
-### Using Serde Integration
-
-```rust
-use serde::{Serialize, Deserialize};
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct Person {
-    name: String,
-    age: i64,
-}
-
-let sproto = sproto::parser::parse(r#"
-    .Person { name 0 : string  age 1 : integer }
-"#).unwrap();
-let person_type = sproto.get_type("Person").unwrap();
-
-let person = Person { name: "Alice".into(), age: 30 };
-
-// Serialize to sproto binary
-let bytes = sproto::serde::to_bytes(&sproto, person_type, &person).unwrap();
-
-// Deserialize from sproto binary
-let decoded: Person = sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
-assert_eq!(person, decoded);
-```
-
 ### Using Pack/Unpack Compression
 
 ```rust
 use sproto::pack;
 
-let encoded = codec::encode(&sproto, person_type, &value).unwrap();
-
-// Compress for transmission
+// Compress encoded data for transmission
 let packed = pack::pack(&encoded);
 
 // Decompress after receiving
@@ -133,25 +101,24 @@ let unpacked = pack::unpack(&packed).unwrap();
 ### Using RPC
 
 ```rust
-use sproto::rpc::Host;
-use sproto::binary_schema;
+use sproto::rpc::{Host, DispatchResult};
 
 // Load RPC schema
-let sproto = binary_schema::load_binary(&schema_bytes).unwrap();
+let sproto = sproto::binary_schema::load_binary(&schema_bytes).unwrap();
 
 // Create RPC host
-let mut host = Host::new(sproto.clone(), "package").unwrap();
+let mut host = Host::new(sproto.clone());
 
 // Dispatch incoming packet
 match host.dispatch(&packed_data).unwrap() {
-    DispatchResult::Request { name, message, responder, ud } => {
-        // Handle request, send response via responder
+    DispatchResult::Request { name, body, responder, ud } => {
+        // Decode body with serde, handle request
         if let Some(resp) = responder {
-            let response = resp.respond(&response_msg, None).unwrap();
+            let response = resp.respond(&response_body, None).unwrap();
         }
     }
-    DispatchResult::Response { session, message, ud } => {
-        // Handle response
+    DispatchResult::Response { session, body, ud } => {
+        // Decode body with serde, handle response
     }
 }
 ```
@@ -200,15 +167,15 @@ notify 4 {
 
 ## Type Mappings
 
-| Sproto Type | Rust Type | SprotoValue |
-|-------------|-----------|-------------|
-| `integer` | `i64` | `Integer(i64)` |
-| `boolean` | `bool` | `Boolean(bool)` |
-| `string` | `String` | `Str(String)` |
-| `binary` | `Vec<u8>` | `Binary(Vec<u8>)` |
-| `double` | `f64` | `Double(f64)` |
-| `*type` | `Vec<T>` | `Array(Vec<SprotoValue>)` |
-| `.Type` | struct | `Struct(HashMap)` |
+| Sproto Type | Rust Type |
+|-------------|-----------|
+| `integer` | `i64` |
+| `boolean` | `bool` |
+| `string` | `String` |
+| `binary` | `Vec<u8>` |
+| `double` | `f64` |
+| `*type` | `Vec<T>` |
+| `.Type` | struct |
 
 ## Features
 
@@ -234,7 +201,9 @@ This implementation is wire-compatible with the [reference C/Lua implementation]
 
 ## Documentation
 
-- [DESIGN.md](DESIGN.md) - Architecture and implementation details
+- [Design](docs/design.md) - Architecture and implementation details
+- [Usage Guide](docs/usage.md) - Detailed usage guide
+- [Development](docs/development.md) - Development guide
 
 ## License
 

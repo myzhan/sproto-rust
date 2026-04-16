@@ -16,52 +16,38 @@ pub fn pack(src: &[u8]) -> Vec<u8> {
 
     // State for 0xFF run batching
     let mut ff_src_start: usize = 0;
-    let mut ff_des_start: usize = 0;
     let mut ff_n: usize = 0;
 
     while i < srcsz {
-        // Get 8-byte chunk, padding with zeros if needed
-        let mut chunk = [0u8; 8];
-        let remaining = srcsz - i;
-        let copy_len = remaining.min(8);
-        chunk[..copy_len].copy_from_slice(&src[i..i + copy_len]);
-
-        let (tag, mut notzero) = compute_tag(&chunk);
+        let word = load_word(src, i);
+        let (tag, notzero) = compute_tag_word(word);
 
         // Promote 6/7 non-zero to 8 ONLY when already in an FF run
-        if (notzero == 6 || notzero == 7) && ff_n > 0 {
-            notzero = 8;
-        }
+        let effective = if (notzero == 6 || notzero == 7) && ff_n > 0 {
+            8
+        } else {
+            notzero
+        };
 
-        if notzero == 8 {
-            if ff_n > 0 {
-                // Continue FF run: reserve 8 more bytes for raw data
-                ff_n += 1;
-                result.extend_from_slice(&[0u8; 8]);
-                if ff_n == 256 {
-                    write_ff_data(src, srcsz, &mut result, ff_src_start, ff_des_start, ff_n);
-                    ff_n = 0;
-                }
-            } else {
-                // Start new FF run: reserve 10 bytes (tag + count + 8 data)
+        if effective == 8 {
+            if ff_n == 0 {
                 ff_src_start = i;
-                ff_des_start = result.len();
-                ff_n = 1;
-                result.extend_from_slice(&[0u8; 10]);
+            }
+            ff_n += 1;
+            if ff_n == 256 {
+                flush_ff(src, &mut result, ff_src_start, ff_n);
+                ff_n = 0;
             }
         } else {
             if ff_n > 0 {
-                // Flush pending FF run
-                write_ff_data(src, srcsz, &mut result, ff_src_start, ff_des_start, ff_n);
+                flush_ff(src, &mut result, ff_src_start, ff_n);
                 ff_n = 0;
             }
 
-            // Normal pack: tag byte + non-zero bytes
+            // Normal pack: tag byte + non-zero bytes in one batch
             result.push(tag);
-            for &byte in &chunk {
-                if byte != 0 {
-                    result.push(byte);
-                }
+            if tag != 0 {
+                pack_nonzero(&mut result, word, tag);
             }
         }
 
@@ -69,90 +55,128 @@ pub fn pack(src: &[u8]) -> Vec<u8> {
     }
 
     if ff_n > 0 {
-        write_ff_data(src, srcsz, &mut result, ff_src_start, ff_des_start, ff_n);
+        flush_ff(src, &mut result, ff_src_start, ff_n);
     }
 
     result
 }
 
-fn compute_tag(chunk: &[u8; 8]) -> (u8, usize) {
-    let mut tag: u8 = 0;
-    let mut notzero = 0;
-    for (i, &byte) in chunk.iter().enumerate() {
-        if byte != 0 {
-            notzero += 1;
-            tag |= 1 << i;
-        }
+/// Load an 8-byte word from src at offset, zero-padding if past end.
+#[inline(always)]
+fn load_word(src: &[u8], offset: usize) -> u64 {
+    if offset + 8 <= src.len() {
+        let bytes: [u8; 8] = src[offset..offset + 8].try_into().unwrap();
+        u64::from_le_bytes(bytes)
+    } else {
+        let mut buf = [0u8; 8];
+        buf[..src.len() - offset].copy_from_slice(&src[offset..]);
+        u64::from_le_bytes(buf)
     }
-    (tag, notzero)
 }
 
-fn write_ff_data(
-    src: &[u8],
-    src_len: usize,
-    result: &mut Vec<u8>,
-    src_start: usize,
-    des_start: usize,
-    n: usize,
-) {
-    let total_bytes = n * 8;
-    result[des_start] = 0xFF;
-    result[des_start + 1] = (n - 1) as u8;
-
-    // Copy actual data, zero-padding if past end of source
-    let src_end = (src_start + total_bytes).min(src_len);
-    let available = src_end - src_start;
-    result[des_start + 2..des_start + 2 + available]
-        .copy_from_slice(&src[src_start..src_end]);
-    // Zero-fill any remaining
-    for b in result[des_start + 2 + available..des_start + 2 + total_bytes].iter_mut() {
-        *b = 0;
+/// Compute tag byte and non-zero count from an 8-byte word (branchless).
+#[inline(always)]
+fn compute_tag_word(word: u64) -> (u8, u32) {
+    if word == 0 {
+        return (0, 0);
     }
+    let b = word.to_le_bytes();
+    let tag = ((b[0] != 0) as u8)
+        | (((b[1] != 0) as u8) << 1)
+        | (((b[2] != 0) as u8) << 2)
+        | (((b[3] != 0) as u8) << 3)
+        | (((b[4] != 0) as u8) << 4)
+        | (((b[5] != 0) as u8) << 5)
+        | (((b[6] != 0) as u8) << 6)
+        | (((b[7] != 0) as u8) << 7);
+    (tag, tag.count_ones())
+}
 
-    // Truncate result to exactly des_start + 2 + total_bytes
-    result.truncate(des_start + 2 + total_bytes);
+/// Write non-zero bytes from a word into result, guided by tag bits.
+#[inline(always)]
+fn pack_nonzero(result: &mut Vec<u8>, word: u64, tag: u8) {
+    let b = word.to_le_bytes();
+    let mut buf = [0u8; 8];
+    let mut n = 0usize;
+    if tag & 0x01 != 0 { buf[n] = b[0]; n += 1; }
+    if tag & 0x02 != 0 { buf[n] = b[1]; n += 1; }
+    if tag & 0x04 != 0 { buf[n] = b[2]; n += 1; }
+    if tag & 0x08 != 0 { buf[n] = b[3]; n += 1; }
+    if tag & 0x10 != 0 { buf[n] = b[4]; n += 1; }
+    if tag & 0x20 != 0 { buf[n] = b[5]; n += 1; }
+    if tag & 0x40 != 0 { buf[n] = b[6]; n += 1; }
+    if tag & 0x80 != 0 { buf[n] = b[7]; n += 1; }
+    result.extend_from_slice(&buf[..n]);
+}
+
+/// Flush an 0xFF run: write tag, count, and raw source data directly.
+fn flush_ff(src: &[u8], result: &mut Vec<u8>, src_start: usize, n: usize) {
+    let total_bytes = n * 8;
+    result.push(0xFF);
+    result.push((n - 1) as u8);
+    let src_end = (src_start + total_bytes).min(src.len());
+    result.extend_from_slice(&src[src_start..src_end]);
+    // Zero-pad if source was shorter than total_bytes (last partial word)
+    let padding = total_bytes - (src_end - src_start);
+    if padding > 0 {
+        result.resize(result.len() + padding, 0);
+    }
 }
 
 /// Unpack (decompress) sproto packed data.
 pub fn unpack(src: &[u8]) -> Result<Vec<u8>, PackError> {
-    let mut result = Vec::new();
+    let len = src.len();
+    // Pre-allocate: each tag byte produces 8 output bytes
+    let mut result = Vec::with_capacity(len.saturating_mul(2));
     let mut i = 0;
 
-    while i < src.len() {
+    while i < len {
         let header = src[i];
         i += 1;
 
         if header == 0xFF {
-            if i >= src.len() {
+            if i >= len {
                 return Err(PackError::InvalidData(
                     "0xFF tag at end of data without count byte".into(),
                 ));
             }
             let n = (src[i] as usize + 1) * 8;
             i += 1;
-            if i + n > src.len() {
+            if i + n > len {
                 return Err(PackError::InvalidData(format!(
                     "0xFF run needs {} bytes but only {} available",
                     n,
-                    src.len() - i
+                    len - i
                 )));
             }
             result.extend_from_slice(&src[i..i + n]);
             i += n;
+        } else if header == 0x00 {
+            // All-zero word: write 8 zeros at once
+            result.extend_from_slice(&[0u8; 8]);
         } else {
-            for bit in 0..8 {
-                if header & (1 << bit) != 0 {
-                    if i >= src.len() {
-                        return Err(PackError::InvalidData(
-                            "truncated packed data in normal segment".into(),
-                        ));
-                    }
-                    result.push(src[i]);
-                    i += 1;
-                } else {
-                    result.push(0);
-                }
+            // Single bounds check: count non-zero bytes needed from source
+            let notzero = header.count_ones() as usize;
+            if i + notzero > len {
+                return Err(PackError::InvalidData(
+                    "truncated packed data in normal segment".into(),
+                ));
             }
+            // Write 8 bytes: zero-initialized, then fill non-zero positions
+            let out_start = result.len();
+            result.resize(out_start + 8, 0);
+            let out = &mut result[out_start..];
+            let data = &src[i..i + notzero];
+            let mut si = 0;
+            if header & 0x01 != 0 { out[0] = data[si]; si += 1; }
+            if header & 0x02 != 0 { out[1] = data[si]; si += 1; }
+            if header & 0x04 != 0 { out[2] = data[si]; si += 1; }
+            if header & 0x08 != 0 { out[3] = data[si]; si += 1; }
+            if header & 0x10 != 0 { out[4] = data[si]; si += 1; }
+            if header & 0x20 != 0 { out[5] = data[si]; si += 1; }
+            if header & 0x40 != 0 { out[6] = data[si]; si += 1; }
+            if header & 0x80 != 0 { out[7] = data[si]; }
+            i += notzero;
         }
     }
 

@@ -6,31 +6,14 @@
 //!
 //! # Quick Start
 //!
-//! ```rust
-//! use sproto::parser;
-//! use sproto::value::SprotoValue;
-//! use sproto::codec;
+//! Two encoding approaches are available:
 //!
-//! let sproto = parser::parse(r#"
-//!     .Person {
-//!         name 0 : string
-//!         age 1 : integer
-//!     }
-//! "#).unwrap();
-//!
-//! let person_type = sproto.get_type("Person").unwrap();
-//! let value = SprotoValue::from_fields(vec![
-//!     ("name", "Alice".into()),
-//!     ("age", 30i64.into()),
-//! ]);
-//!
-//! let encoded = codec::encode(&sproto, person_type, &value).unwrap();
-//! let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-//! assert_eq!(value, decoded);
-//! ```
+//! - **Serde** (feature `serde`): Use `#[derive(Serialize, Deserialize)]` with
+//!   schema-driven `to_bytes` / `from_bytes`.
+//! - **Derive macros** (feature `derive`): Use `#[derive(SprotoEncode, SprotoDecode)]`
+//!   for compile-time inline wire format code with zero runtime overhead.
 
 pub mod error;
-pub mod value;
 pub mod types;
 pub mod codec;
 pub mod pack;
@@ -44,7 +27,6 @@ pub mod serde;
 
 pub use error::SprotoError;
 pub use types::Sproto;
-pub use value::SprotoValue;
 pub use derive_traits::{SprotoEncode, SprotoDecode};
 
 // Re-export derive macros when the feature is enabled

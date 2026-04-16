@@ -5,20 +5,19 @@
 //! - pack(data) -> unpack() should return the original data
 //! - Full pipeline: encode -> pack -> unpack -> decode
 
-use sproto::codec;
+use serde::{Deserialize, Serialize};
 use sproto::pack;
 use sproto::types::{Field, FieldType, Sproto, SprotoType};
-use sproto::value::SprotoValue;
 use std::collections::HashMap;
 
 /// Helper to create a simple Sproto schema for testing.
 fn create_test_schema() -> Sproto {
     // Person type with various field types
-    let person_type = SprotoType {
-        name: "Person".to_string(),
-        fields: vec![
+    let person_type = SprotoType::new(
+        "Person".to_string(),
+        vec![
             Field {
-                name: "name".to_string(),
+                name: "name".into(),
                 tag: 0,
                 field_type: FieldType::String,
                 is_array: false,
@@ -27,7 +26,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "age".to_string(),
+                name: "age".into(),
                 tag: 1,
                 field_type: FieldType::Integer,
                 is_array: false,
@@ -36,7 +35,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "active".to_string(),
+                name: "active".into(),
                 tag: 2,
                 field_type: FieldType::Boolean,
                 is_array: false,
@@ -45,7 +44,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "score".to_string(),
+                name: "score".into(),
                 tag: 3,
                 field_type: FieldType::Double,
                 is_array: false,
@@ -54,7 +53,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "data".to_string(),
+                name: "data".into(),
                 tag: 4,
                 field_type: FieldType::Binary,
                 is_array: false,
@@ -63,16 +62,16 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
         ],
-        base_tag: 0,
-        maxn: 5,
-    };
+        0,
+        5,
+    );
 
     // Data type for array tests
-    let data_type = SprotoType {
-        name: "Data".to_string(),
-        fields: vec![
+    let data_type = SprotoType::new(
+        "Data".to_string(),
+        vec![
             Field {
-                name: "numbers".to_string(),
+                name: "numbers".into(),
                 tag: 0,
                 field_type: FieldType::Integer,
                 is_array: true,
@@ -81,7 +80,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "names".to_string(),
+                name: "names".into(),
                 tag: 1,
                 field_type: FieldType::String,
                 is_array: true,
@@ -90,7 +89,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "flags".to_string(),
+                name: "flags".into(),
                 tag: 2,
                 field_type: FieldType::Boolean,
                 is_array: true,
@@ -99,7 +98,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "values".to_string(),
+                name: "values".into(),
                 tag: 3,
                 field_type: FieldType::Double,
                 is_array: true,
@@ -108,16 +107,16 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
         ],
-        base_tag: 0,
-        maxn: 4,
-    };
+        0,
+        4,
+    );
 
     // Nested type for nested struct tests
-    let nested_type = SprotoType {
-        name: "Nested".to_string(),
-        fields: vec![
+    let nested_type = SprotoType::new(
+        "Nested".to_string(),
+        vec![
             Field {
-                name: "id".to_string(),
+                name: "id".into(),
                 tag: 0,
                 field_type: FieldType::Integer,
                 is_array: false,
@@ -126,7 +125,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "person".to_string(),
+                name: "person".into(),
                 tag: 1,
                 field_type: FieldType::Struct(0), // Reference to Person
                 is_array: false,
@@ -135,7 +134,7 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
             Field {
-                name: "people".to_string(),
+                name: "people".into(),
                 tag: 2,
                 field_type: FieldType::Struct(0), // Array of Person
                 is_array: true,
@@ -144,9 +143,9 @@ fn create_test_schema() -> Sproto {
                 decimal_precision: 0,
             },
         ],
-        base_tag: 0,
-        maxn: 3,
-    };
+        0,
+        3,
+    );
 
     let mut types_by_name = HashMap::new();
     types_by_name.insert("Person".to_string(), 0);
@@ -162,6 +161,138 @@ fn create_test_schema() -> Sproto {
     }
 }
 
+// Serde helper: encode a value to sproto wire bytes.
+fn encode<T: Serialize>(sproto: &Sproto, type_name: &str, value: &T) -> Vec<u8> {
+    let st = sproto.get_type(type_name).unwrap();
+    sproto::serde::to_bytes(sproto, st, value).unwrap()
+}
+
+// Serde helper: decode sproto wire bytes into a value.
+fn decode<T: for<'de> Deserialize<'de>>(sproto: &Sproto, type_name: &str, data: &[u8]) -> T {
+    let st = sproto.get_type(type_name).unwrap();
+    sproto::serde::from_bytes(sproto, st, data).unwrap()
+}
+
+// Custom serde module for Option<Vec<u8>> via serde_bytes.
+mod opt_bytes {
+    use serde::{self, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(v) => serde_bytes::serialize(v, serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Some(serde_bytes::deserialize(deserializer)?))
+    }
+}
+
+// ---- Serde structs matching the test schema ----
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct PersonEnc {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    age: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    score: Option<f64>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "opt_bytes",
+        default
+    )]
+    data: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct PersonDec {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    age: Option<i64>,
+    #[serde(default)]
+    active: Option<bool>,
+    #[serde(default)]
+    score: Option<f64>,
+    #[serde(with = "opt_bytes", default)]
+    data: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct DataEnc {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    numbers: Option<Vec<i64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    names: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    flags: Option<Vec<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    values: Option<Vec<f64>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct DataDec {
+    #[serde(default)]
+    numbers: Option<Vec<i64>>,
+    #[serde(default)]
+    names: Option<Vec<String>>,
+    #[serde(default)]
+    flags: Option<Vec<bool>>,
+    #[serde(default)]
+    values: Option<Vec<f64>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct NestedPersonEnc {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    age: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct NestedPersonDec {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    age: Option<i64>,
+    #[serde(default)]
+    active: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct NestedEnc {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    person: Option<NestedPersonEnc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    people: Option<Vec<NestedPersonEnc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct NestedDec {
+    #[serde(default)]
+    id: Option<i64>,
+    #[serde(default)]
+    person: Option<NestedPersonDec>,
+    #[serde(default)]
+    people: Option<Vec<NestedPersonDec>>,
+}
+
 // ============================================================================
 // Encode/Decode Round-trip Tests
 // ============================================================================
@@ -169,339 +300,334 @@ fn create_test_schema() -> Sproto {
 #[test]
 fn test_roundtrip_simple_string() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
-
-    let original = SprotoValue::from_fields(vec![("name", "Alice".into())]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("name").unwrap().as_str(), Some("Alice"));
+    let original = PersonEnc {
+        name: Some("Alice".into()),
+        age: None,
+        active: None,
+        score: None,
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.name.as_deref(), Some("Alice"));
 }
 
 #[test]
 fn test_roundtrip_simple_integer() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
-
-    let original = SprotoValue::from_fields(vec![("age", 42i64.into())]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("age").unwrap().as_integer(), Some(42));
+    let original = PersonEnc {
+        name: None,
+        age: Some(42),
+        active: None,
+        score: None,
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.age, Some(42));
 }
 
 #[test]
 fn test_roundtrip_simple_boolean() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
 
     // Test true
-    let original = SprotoValue::from_fields(vec![("active", true.into())]);
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-    assert_eq!(decoded.get("active").unwrap().as_boolean(), Some(true));
+    let original = PersonEnc {
+        name: None,
+        age: None,
+        active: Some(true),
+        score: None,
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.active, Some(true));
 
     // Test false
-    let original = SprotoValue::from_fields(vec![("active", false.into())]);
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-    assert_eq!(decoded.get("active").unwrap().as_boolean(), Some(false));
+    let original = PersonEnc {
+        name: None,
+        age: None,
+        active: Some(false),
+        score: None,
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.active, Some(false));
 }
 
 #[test]
 fn test_roundtrip_simple_double() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
-
-    let original = SprotoValue::from_fields(vec![("score", 3.14159f64.into())]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    let score = decoded.get("score").unwrap().as_double().unwrap();
+    let original = PersonEnc {
+        name: None,
+        age: None,
+        active: None,
+        score: Some(3.14159),
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    let score = decoded.score.unwrap();
     assert!((score - 3.14159).abs() < 1e-10);
 }
 
 #[test]
 fn test_roundtrip_simple_binary() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
-
     let binary_data = vec![0x01, 0x02, 0x03, 0xFF, 0xFE];
-    let original = SprotoValue::from_fields(vec![("data", SprotoValue::Binary(binary_data.clone()))]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("data").unwrap().as_binary(), Some(binary_data.as_slice()));
+    let original = PersonEnc {
+        name: None,
+        age: None,
+        active: None,
+        score: None,
+        data: Some(binary_data.clone()),
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.data, Some(binary_data));
 }
 
 #[test]
 fn test_roundtrip_all_primitive_types() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
+    let original = PersonEnc {
+        name: Some("Test User".into()),
+        age: Some(25),
+        active: Some(true),
+        score: Some(98.5),
+        data: Some(vec![0xDE, 0xAD, 0xBE, 0xEF]),
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
 
-    let original = SprotoValue::from_fields(vec![
-        ("name", "Test User".into()),
-        ("age", 25i64.into()),
-        ("active", true.into()),
-        ("score", 98.5f64.into()),
-        ("data", SprotoValue::Binary(vec![0xDE, 0xAD, 0xBE, 0xEF])),
-    ]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("name").unwrap().as_str(), Some("Test User"));
-    assert_eq!(decoded.get("age").unwrap().as_integer(), Some(25));
-    assert_eq!(decoded.get("active").unwrap().as_boolean(), Some(true));
-    assert!((decoded.get("score").unwrap().as_double().unwrap() - 98.5).abs() < 1e-10);
-    assert_eq!(
-        decoded.get("data").unwrap().as_binary(),
-        Some([0xDE, 0xAD, 0xBE, 0xEF].as_slice())
-    );
+    assert_eq!(decoded.name.as_deref(), Some("Test User"));
+    assert_eq!(decoded.age, Some(25));
+    assert_eq!(decoded.active, Some(true));
+    assert!((decoded.score.unwrap() - 98.5).abs() < 1e-10);
+    assert_eq!(decoded.data, Some(vec![0xDE, 0xAD, 0xBE, 0xEF]));
 }
 
 #[test]
 fn test_roundtrip_integer_array() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
+    let numbers: Vec<i64> = (1..=10).collect();
+    let original = DataEnc {
+        numbers: Some(numbers.clone()),
+        names: None,
+        flags: None,
+        values: None,
+    };
+    let encoded = encode(&sproto, "Data", &original);
+    let decoded: DataDec = decode(&sproto, "Data", &encoded);
 
-    let numbers: Vec<SprotoValue> = (1..=10).map(|i| SprotoValue::Integer(i)).collect();
-    let original = SprotoValue::from_fields(vec![("numbers", SprotoValue::Array(numbers))]);
-
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &encoded).unwrap();
-
-    let arr = decoded.get("numbers").unwrap().as_array().unwrap();
+    let arr = decoded.numbers.unwrap();
     assert_eq!(arr.len(), 10);
-    for (i, val) in arr.iter().enumerate() {
-        assert_eq!(val.as_integer(), Some((i + 1) as i64));
-    }
+    assert_eq!(arr, numbers);
 }
 
 #[test]
 fn test_roundtrip_large_integers() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    // Test with 64-bit integers that exceed 32-bit range
     let large_values = vec![
-        SprotoValue::Integer(1i64 << 33),
-        SprotoValue::Integer(-(1i64 << 40)),
-        SprotoValue::Integer(i64::MAX),
-        SprotoValue::Integer(i64::MIN),
+        1i64 << 33,
+        -(1i64 << 40),
+        i64::MAX,
+        i64::MIN,
     ];
-    let original = SprotoValue::from_fields(vec![("numbers", SprotoValue::Array(large_values.clone()))]);
+    let original = DataEnc {
+        numbers: Some(large_values.clone()),
+        names: None,
+        flags: None,
+        values: None,
+    };
+    let encoded = encode(&sproto, "Data", &original);
+    let decoded: DataDec = decode(&sproto, "Data", &encoded);
 
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &encoded).unwrap();
-
-    let arr = decoded.get("numbers").unwrap().as_array().unwrap();
-    assert_eq!(arr.len(), 4);
-    assert_eq!(arr[0].as_integer(), Some(1i64 << 33));
-    assert_eq!(arr[1].as_integer(), Some(-(1i64 << 40)));
-    assert_eq!(arr[2].as_integer(), Some(i64::MAX));
-    assert_eq!(arr[3].as_integer(), Some(i64::MIN));
+    let arr = decoded.numbers.unwrap();
+    assert_eq!(arr, large_values);
 }
 
 #[test]
 fn test_roundtrip_string_array() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    let names = vec![
-        SprotoValue::Str("Alice".to_string()),
-        SprotoValue::Str("Bob".to_string()),
-        SprotoValue::Str("Charlie".to_string()),
-    ];
-    let original = SprotoValue::from_fields(vec![("names", SprotoValue::Array(names))]);
-
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &encoded).unwrap();
-
-    let arr = decoded.get("names").unwrap().as_array().unwrap();
-    assert_eq!(arr.len(), 3);
-    assert_eq!(arr[0].as_str(), Some("Alice"));
-    assert_eq!(arr[1].as_str(), Some("Bob"));
-    assert_eq!(arr[2].as_str(), Some("Charlie"));
+    let names = vec!["Alice".to_string(), "Bob".to_string(), "Charlie".to_string()];
+    let original = DataEnc {
+        numbers: None,
+        names: Some(names.clone()),
+        flags: None,
+        values: None,
+    };
+    let encoded = encode(&sproto, "Data", &original);
+    let decoded: DataDec = decode(&sproto, "Data", &encoded);
+    assert_eq!(decoded.names.unwrap(), names);
 }
 
 #[test]
 fn test_roundtrip_boolean_array() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    let flags = vec![
-        SprotoValue::Boolean(true),
-        SprotoValue::Boolean(false),
-        SprotoValue::Boolean(true),
-        SprotoValue::Boolean(false),
-    ];
-    let original = SprotoValue::from_fields(vec![("flags", SprotoValue::Array(flags))]);
-
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &encoded).unwrap();
-
-    let arr = decoded.get("flags").unwrap().as_array().unwrap();
-    assert_eq!(arr.len(), 4);
-    assert_eq!(arr[0].as_boolean(), Some(true));
-    assert_eq!(arr[1].as_boolean(), Some(false));
-    assert_eq!(arr[2].as_boolean(), Some(true));
-    assert_eq!(arr[3].as_boolean(), Some(false));
+    let flags = vec![true, false, true, false];
+    let original = DataEnc {
+        numbers: None,
+        names: None,
+        flags: Some(flags.clone()),
+        values: None,
+    };
+    let encoded = encode(&sproto, "Data", &original);
+    let decoded: DataDec = decode(&sproto, "Data", &encoded);
+    assert_eq!(decoded.flags.unwrap(), flags);
 }
 
 #[test]
 fn test_roundtrip_double_array() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
+    let values = vec![1.1, 2.2, 3.3, -4.4];
+    let original = DataEnc {
+        numbers: None,
+        names: None,
+        flags: None,
+        values: Some(values.clone()),
+    };
+    let encoded = encode(&sproto, "Data", &original);
+    let decoded: DataDec = decode(&sproto, "Data", &encoded);
 
-    let values = vec![
-        SprotoValue::Double(1.1),
-        SprotoValue::Double(2.2),
-        SprotoValue::Double(3.3),
-        SprotoValue::Double(-4.4),
-    ];
-    let original = SprotoValue::from_fields(vec![("values", SprotoValue::Array(values))]);
-
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &encoded).unwrap();
-
-    let arr = decoded.get("values").unwrap().as_array().unwrap();
+    let arr = decoded.values.unwrap();
     assert_eq!(arr.len(), 4);
-    assert!((arr[0].as_double().unwrap() - 1.1).abs() < 1e-10);
-    assert!((arr[1].as_double().unwrap() - 2.2).abs() < 1e-10);
-    assert!((arr[2].as_double().unwrap() - 3.3).abs() < 1e-10);
-    assert!((arr[3].as_double().unwrap() - (-4.4)).abs() < 1e-10);
+    for (a, b) in arr.iter().zip(values.iter()) {
+        assert!((a - b).abs() < 1e-10);
+    }
 }
 
 #[test]
 fn test_roundtrip_empty_array() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
+    let original = DataEnc {
+        numbers: Some(vec![]),
+        names: None,
+        flags: None,
+        values: None,
+    };
+    let encoded = encode(&sproto, "Data", &original);
+    let decoded: DataDec = decode(&sproto, "Data", &encoded);
 
-    let original = SprotoValue::from_fields(vec![("numbers", SprotoValue::Array(vec![]))]);
-
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &encoded).unwrap();
-
-    // Empty arrays are typically not included in the decoded result
-    // or decoded as an empty array
-    if let Some(arr) = decoded.get("numbers") {
-        assert!(arr.as_array().unwrap().is_empty());
+    // Empty arrays may not appear in decoded output or appear as empty
+    match decoded.numbers {
+        Some(arr) => assert!(arr.is_empty()),
+        None => {} // also acceptable
     }
 }
 
 #[test]
 fn test_roundtrip_nested_struct() {
     let sproto = create_test_schema();
-    let nested_type = sproto.get_type("Nested").unwrap();
+    let original = NestedEnc {
+        id: Some(123),
+        person: Some(NestedPersonEnc {
+            name: Some("Alice".into()),
+            age: Some(30),
+            active: None,
+        }),
+        people: None,
+    };
+    let encoded = encode(&sproto, "Nested", &original);
+    let decoded: NestedDec = decode(&sproto, "Nested", &encoded);
 
-    let person = SprotoValue::from_fields(vec![
-        ("name", "Alice".into()),
-        ("age", 30i64.into()),
-    ]);
-
-    let original = SprotoValue::from_fields(vec![
-        ("id", 123i64.into()),
-        ("person", person),
-    ]);
-
-    let encoded = codec::encode(&sproto, nested_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, nested_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("id").unwrap().as_integer(), Some(123));
-    let person = decoded.get("person").unwrap();
-    assert_eq!(person.get("name").unwrap().as_str(), Some("Alice"));
-    assert_eq!(person.get("age").unwrap().as_integer(), Some(30));
+    assert_eq!(decoded.id, Some(123));
+    let person = decoded.person.unwrap();
+    assert_eq!(person.name.as_deref(), Some("Alice"));
+    assert_eq!(person.age, Some(30));
 }
 
 #[test]
 fn test_roundtrip_nested_struct_array() {
     let sproto = create_test_schema();
-    let nested_type = sproto.get_type("Nested").unwrap();
-
-    let people = vec![
-        SprotoValue::from_fields(vec![
-            ("name", "Alice".into()),
-            ("age", 25i64.into()),
+    let original = NestedEnc {
+        id: Some(456),
+        person: None,
+        people: Some(vec![
+            NestedPersonEnc {
+                name: Some("Alice".into()),
+                age: Some(25),
+                active: None,
+            },
+            NestedPersonEnc {
+                name: Some("Bob".into()),
+                age: Some(30),
+                active: None,
+            },
         ]),
-        SprotoValue::from_fields(vec![
-            ("name", "Bob".into()),
-            ("age", 30i64.into()),
-        ]),
-    ];
+    };
+    let encoded = encode(&sproto, "Nested", &original);
+    let decoded: NestedDec = decode(&sproto, "Nested", &encoded);
 
-    let original = SprotoValue::from_fields(vec![
-        ("id", 456i64.into()),
-        ("people", SprotoValue::Array(people)),
-    ]);
-
-    let encoded = codec::encode(&sproto, nested_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, nested_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("id").unwrap().as_integer(), Some(456));
-    let people = decoded.get("people").unwrap().as_array().unwrap();
+    assert_eq!(decoded.id, Some(456));
+    let people = decoded.people.unwrap();
     assert_eq!(people.len(), 2);
-    assert_eq!(people[0].get("name").unwrap().as_str(), Some("Alice"));
-    assert_eq!(people[0].get("age").unwrap().as_integer(), Some(25));
-    assert_eq!(people[1].get("name").unwrap().as_str(), Some("Bob"));
-    assert_eq!(people[1].get("age").unwrap().as_integer(), Some(30));
+    assert_eq!(people[0].name.as_deref(), Some("Alice"));
+    assert_eq!(people[0].age, Some(25));
+    assert_eq!(people[1].name.as_deref(), Some("Bob"));
+    assert_eq!(people[1].age, Some(30));
 }
 
 #[test]
 fn test_roundtrip_unicode_string() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
-
     let unicode_name = "Hello, \u{4e16}\u{754c}! \u{1f600}"; // "Hello, 世界! 😀"
-    let original = SprotoValue::from_fields(vec![("name", unicode_name.into())]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("name").unwrap().as_str(), Some(unicode_name));
+    let original = PersonEnc {
+        name: Some(unicode_name.into()),
+        age: None,
+        active: None,
+        score: None,
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.name.as_deref(), Some(unicode_name));
 }
 
 #[test]
 fn test_roundtrip_empty_string() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
-
-    let original = SprotoValue::from_fields(vec![("name", "".into())]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("name").unwrap().as_str(), Some(""));
+    let original = PersonEnc {
+        name: Some("".into()),
+        age: None,
+        active: None,
+        score: None,
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.name.as_deref(), Some(""));
 }
 
 #[test]
 fn test_roundtrip_zero_integer() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
-
-    let original = SprotoValue::from_fields(vec![("age", 0i64.into())]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("age").unwrap().as_integer(), Some(0));
+    let original = PersonEnc {
+        name: None,
+        age: Some(0),
+        active: None,
+        score: None,
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.age, Some(0));
 }
 
 #[test]
 fn test_roundtrip_negative_integer() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
-
-    let original = SprotoValue::from_fields(vec![("age", (-12345i64).into())]);
-
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &encoded).unwrap();
-
-    assert_eq!(decoded.get("age").unwrap().as_integer(), Some(-12345));
+    let original = PersonEnc {
+        name: None,
+        age: Some(-12345),
+        active: None,
+        score: None,
+        data: None,
+    };
+    let encoded = encode(&sproto, "Person", &original);
+    let decoded: PersonDec = decode(&sproto, "Person", &encoded);
+    assert_eq!(decoded.age, Some(-12345));
 }
 
 // ============================================================================
@@ -601,101 +727,74 @@ fn test_pack_compression() {
 #[test]
 fn test_full_pipeline_simple() {
     let sproto = create_test_schema();
-    let person_type = sproto.get_type("Person").unwrap();
+    let original = PersonEnc {
+        name: Some("Test".into()),
+        age: Some(100),
+        active: None,
+        score: None,
+        data: None,
+    };
 
-    let original = SprotoValue::from_fields(vec![
-        ("name", "Test".into()),
-        ("age", 100i64.into()),
-    ]);
-
-    // Full pipeline: encode -> pack -> unpack -> decode
-    let encoded = codec::encode(&sproto, person_type, &original).unwrap();
+    let encoded = encode(&sproto, "Person", &original);
     let packed = pack::pack(&encoded);
     let unpacked = pack::unpack(&packed).unwrap();
-    let decoded = codec::decode(&sproto, person_type, &unpacked[..encoded.len()]).unwrap();
+    let decoded: PersonDec = decode(&sproto, "Person", &unpacked[..encoded.len()]);
 
-    assert_eq!(decoded.get("name").unwrap().as_str(), Some("Test"));
-    assert_eq!(decoded.get("age").unwrap().as_integer(), Some(100));
+    assert_eq!(decoded.name.as_deref(), Some("Test"));
+    assert_eq!(decoded.age, Some(100));
 }
 
 #[test]
 fn test_full_pipeline_complex() {
     let sproto = create_test_schema();
-    let nested_type = sproto.get_type("Nested").unwrap();
-
-    let people = vec![
-        SprotoValue::from_fields(vec![
-            ("name", "Alice".into()),
-            ("age", 25i64.into()),
-            ("active", true.into()),
+    let original = NestedEnc {
+        id: Some(999),
+        person: None,
+        people: Some(vec![
+            NestedPersonEnc {
+                name: Some("Alice".into()),
+                age: Some(25),
+                active: Some(true),
+            },
+            NestedPersonEnc {
+                name: Some("Bob".into()),
+                age: Some(30),
+                active: Some(false),
+            },
         ]),
-        SprotoValue::from_fields(vec![
-            ("name", "Bob".into()),
-            ("age", 30i64.into()),
-            ("active", false.into()),
-        ]),
-    ];
+    };
 
-    let original = SprotoValue::from_fields(vec![
-        ("id", 999i64.into()),
-        ("people", SprotoValue::Array(people)),
-    ]);
-
-    // Full pipeline
-    let encoded = codec::encode(&sproto, nested_type, &original).unwrap();
+    let encoded = encode(&sproto, "Nested", &original);
     let packed = pack::pack(&encoded);
     let unpacked = pack::unpack(&packed).unwrap();
-    let decoded = codec::decode(&sproto, nested_type, &unpacked[..encoded.len()]).unwrap();
+    let decoded: NestedDec = decode(&sproto, "Nested", &unpacked[..encoded.len()]);
 
-    assert_eq!(decoded.get("id").unwrap().as_integer(), Some(999));
-    let people = decoded.get("people").unwrap().as_array().unwrap();
+    assert_eq!(decoded.id, Some(999));
+    let people = decoded.people.unwrap();
     assert_eq!(people.len(), 2);
-    assert_eq!(people[0].get("name").unwrap().as_str(), Some("Alice"));
-    assert_eq!(people[1].get("name").unwrap().as_str(), Some("Bob"));
+    assert_eq!(people[0].name.as_deref(), Some("Alice"));
+    assert_eq!(people[1].name.as_deref(), Some("Bob"));
 }
 
 #[test]
 fn test_full_pipeline_all_types() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
+    let original = DataEnc {
+        numbers: Some(vec![1, 2, 3]),
+        names: Some(vec!["a".to_string(), "b".to_string()]),
+        flags: Some(vec![true, false]),
+        values: Some(vec![1.5, 2.5]),
+    };
 
-    let original = SprotoValue::from_fields(vec![
-        ("numbers", SprotoValue::Array(vec![
-            SprotoValue::Integer(1),
-            SprotoValue::Integer(2),
-            SprotoValue::Integer(3),
-        ])),
-        ("names", SprotoValue::Array(vec![
-            SprotoValue::Str("a".to_string()),
-            SprotoValue::Str("b".to_string()),
-        ])),
-        ("flags", SprotoValue::Array(vec![
-            SprotoValue::Boolean(true),
-            SprotoValue::Boolean(false),
-        ])),
-        ("values", SprotoValue::Array(vec![
-            SprotoValue::Double(1.5),
-            SprotoValue::Double(2.5),
-        ])),
-    ]);
-
-    // Full pipeline
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
+    let encoded = encode(&sproto, "Data", &original);
     let packed = pack::pack(&encoded);
     let unpacked = pack::unpack(&packed).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &unpacked[..encoded.len()]).unwrap();
+    let decoded: DataDec = decode(&sproto, "Data", &unpacked[..encoded.len()]);
 
-    let numbers = decoded.get("numbers").unwrap().as_array().unwrap();
-    assert_eq!(numbers.len(), 3);
-
-    let names = decoded.get("names").unwrap().as_array().unwrap();
-    assert_eq!(names.len(), 2);
-
-    let flags = decoded.get("flags").unwrap().as_array().unwrap();
-    assert_eq!(flags.len(), 2);
-
-    let values = decoded.get("values").unwrap().as_array().unwrap();
-    assert_eq!(values.len(), 2);
+    assert_eq!(decoded.numbers.unwrap().len(), 3);
+    assert_eq!(decoded.names.unwrap().len(), 2);
+    assert_eq!(decoded.flags.unwrap().len(), 2);
+    assert_eq!(decoded.values.unwrap().len(), 2);
 }
 
 // ============================================================================
@@ -705,55 +804,48 @@ fn test_full_pipeline_all_types() {
 #[test]
 fn test_roundtrip_special_doubles() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
+    let values = vec![0.0, -0.0, f64::MIN_POSITIVE, f64::MAX, f64::MIN];
+    let original = DataEnc {
+        numbers: None,
+        names: None,
+        flags: None,
+        values: Some(values.clone()),
+    };
+    let encoded = encode(&sproto, "Data", &original);
+    let decoded: DataDec = decode(&sproto, "Data", &encoded);
 
-    let values = vec![
-        SprotoValue::Double(0.0),
-        SprotoValue::Double(-0.0),
-        SprotoValue::Double(f64::MIN_POSITIVE),
-        SprotoValue::Double(f64::MAX),
-        SprotoValue::Double(f64::MIN),
-    ];
-    let original = SprotoValue::from_fields(vec![("values", SprotoValue::Array(values))]);
-
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &encoded).unwrap();
-
-    let arr = decoded.get("values").unwrap().as_array().unwrap();
+    let arr = decoded.values.unwrap();
     assert_eq!(arr.len(), 5);
-    assert_eq!(arr[0].as_double().unwrap(), 0.0);
+    assert_eq!(arr[0], 0.0);
     // -0.0 and 0.0 may be equal in comparison
-    assert_eq!(arr[2].as_double().unwrap(), f64::MIN_POSITIVE);
-    assert_eq!(arr[3].as_double().unwrap(), f64::MAX);
-    assert_eq!(arr[4].as_double().unwrap(), f64::MIN);
+    assert_eq!(arr[2], f64::MIN_POSITIVE);
+    assert_eq!(arr[3], f64::MAX);
+    assert_eq!(arr[4], f64::MIN);
 }
 
 #[test]
 fn test_roundtrip_boundary_integers() {
     let sproto = create_test_schema();
-    let data_type = sproto.get_type("Data").unwrap();
-
-    // Test boundary values around 32-bit limits
     let values = vec![
-        SprotoValue::Integer(i32::MAX as i64),
-        SprotoValue::Integer(i32::MIN as i64),
-        SprotoValue::Integer((i32::MAX as i64) + 1),
-        SprotoValue::Integer((i32::MIN as i64) - 1),
-        SprotoValue::Integer(0x7FFF - 1), // Just below inline threshold
-        SprotoValue::Integer(0x7FFF),     // At inline threshold
-        SprotoValue::Integer(0x7FFF + 1), // Just above inline threshold
+        i32::MAX as i64,
+        i32::MIN as i64,
+        (i32::MAX as i64) + 1,
+        (i32::MIN as i64) - 1,
+        0x7FFF - 1, // Just below inline threshold
+        0x7FFF,     // At inline threshold
+        0x7FFF + 1, // Just above inline threshold
     ];
-    let original = SprotoValue::from_fields(vec![("numbers", SprotoValue::Array(values))]);
+    let original = DataEnc {
+        numbers: Some(values.clone()),
+        names: None,
+        flags: None,
+        values: None,
+    };
+    let encoded = encode(&sproto, "Data", &original);
+    let decoded: DataDec = decode(&sproto, "Data", &encoded);
 
-    let encoded = codec::encode(&sproto, data_type, &original).unwrap();
-    let decoded = codec::decode(&sproto, data_type, &encoded).unwrap();
-
-    let arr = decoded.get("numbers").unwrap().as_array().unwrap();
-    assert_eq!(arr.len(), 7);
-    assert_eq!(arr[0].as_integer(), Some(i32::MAX as i64));
-    assert_eq!(arr[1].as_integer(), Some(i32::MIN as i64));
-    assert_eq!(arr[2].as_integer(), Some((i32::MAX as i64) + 1));
-    assert_eq!(arr[3].as_integer(), Some((i32::MIN as i64) - 1));
+    let arr = decoded.numbers.unwrap();
+    assert_eq!(arr, values);
 }
 
 // ============================================================================
@@ -762,7 +854,6 @@ fn test_roundtrip_boundary_integers() {
 
 mod serde_tests {
     use super::*;
-    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct SimplePerson {
@@ -789,7 +880,7 @@ mod serde_tests {
         let person_type = sproto.get_type("Person").unwrap();
 
         let original = SimplePerson {
-            name: "Alice".to_string(),
+            name: "Alice".into(),
             age: 30,
         };
 
@@ -805,7 +896,7 @@ mod serde_tests {
         let person_type = sproto.get_type("Person").unwrap();
 
         let original = SimplePerson {
-            name: "你好世界 🌍".to_string(),
+            name: "你好世界 🌍".into(),
             age: 25,
         };
 
@@ -821,7 +912,7 @@ mod serde_tests {
         let person_type = sproto.get_type("Person").unwrap();
 
         let original = PersonWithOptional {
-            name: "Bob".to_string(),
+            name: "Bob".into(),
             age: Some(40),
             active: Some(true),
         };
@@ -838,7 +929,7 @@ mod serde_tests {
         let person_type = sproto.get_type("Person").unwrap();
 
         let original = PersonWithOptional {
-            name: "Carol".to_string(),
+            name: "Carol".into(),
             age: None,
             active: None,
         };
@@ -861,19 +952,6 @@ mod serde_tests {
 
         let bytes = sproto::serde::to_bytes(&sproto, data_type, &original).unwrap();
         let decoded: DataArrays = sproto::serde::from_bytes(&sproto, data_type, &bytes).unwrap();
-
-        assert_eq!(original, decoded);
-    }
-
-    #[test]
-    fn test_serde_to_value_from_value() {
-        let original = SimplePerson {
-            name: "Test".to_string(),
-            age: 99,
-        };
-
-        let value = sproto::serde::to_value(&original).unwrap();
-        let decoded: SimplePerson = sproto::serde::from_value(&value).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -937,7 +1015,7 @@ mod derive_tests {
     #[test]
     fn test_derive_roundtrip_simple() {
         let original = DeriveSimple {
-            name: "Alice".to_string(),
+            name: "Alice".into(),
             age: 30,
         };
 
@@ -950,7 +1028,7 @@ mod derive_tests {
     #[test]
     fn test_derive_roundtrip_unicode() {
         let original = DeriveSimple {
-            name: "こんにちは 🎉".to_string(),
+            name: "こんにちは 🎉".into(),
             age: 25,
         };
 
@@ -1060,7 +1138,7 @@ mod derive_tests {
     #[test]
     fn test_derive_roundtrip_empty_string() {
         let original = DeriveSimple {
-            name: "".to_string(),
+            name: "".into(),
             age: 0,
         };
 
@@ -1110,41 +1188,89 @@ fn test_addressbook_full_pipeline() {
     "#,
     )
     .unwrap();
-    let st = schema.get_type("AddressBook").unwrap();
 
-    let value = SprotoValue::from_fields(vec![(
-        "person",
-        SprotoValue::Array(vec![
-            SprotoValue::from_fields(vec![
-                ("name", "Alice".into()),
-                ("id", 10000i64.into()),
-                (
-                    "phone",
-                    SprotoValue::Array(vec![
-                        SprotoValue::from_fields(vec![
-                            ("number", SprotoValue::Str("123456789".into())),
-                            ("type", SprotoValue::Integer(1)),
-                        ]),
-                        SprotoValue::from_fields(vec![
-                            ("number", SprotoValue::Str("87654321".into())),
-                            ("type", SprotoValue::Integer(2)),
-                        ]),
-                    ]),
-                ),
-            ]),
-            SprotoValue::from_fields(vec![
-                ("name", "Bob".into()),
-                ("id", 20000i64.into()),
-                (
-                    "phone",
-                    SprotoValue::Array(vec![SprotoValue::from_fields(vec![
-                        ("number", SprotoValue::Str("01234567890".into())),
-                        ("type", SprotoValue::Integer(3)),
-                    ])]),
-                ),
-            ]),
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct PhoneNumber {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        number: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
+        type_: Option<i64>,
+    }
+
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct ABPerson {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        email: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        phone: Option<Vec<PhoneNumber>>,
+    }
+
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct AddressBook {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        person: Option<Vec<ABPerson>>,
+    }
+
+    #[derive(Deserialize, Debug)]
+    struct AddressBookDec {
+        #[serde(default)]
+        person: Option<Vec<ABPersonDec>>,
+    }
+
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct ABPersonDec {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        id: Option<i64>,
+        #[serde(default)]
+        email: Option<String>,
+        #[serde(default)]
+        phone: Option<Vec<PhoneNumberDec>>,
+    }
+
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct PhoneNumberDec {
+        #[serde(default)]
+        number: Option<String>,
+        #[serde(default, rename = "type")]
+        type_: Option<i64>,
+    }
+
+    let value = AddressBook {
+        person: Some(vec![
+            ABPerson {
+                name: Some("Alice".into()),
+                id: Some(10000),
+                email: None,
+                phone: Some(vec![
+                    PhoneNumber {
+                        number: Some("123456789".into()),
+                        type_: Some(1),
+                    },
+                    PhoneNumber {
+                        number: Some("87654321".into()),
+                        type_: Some(2),
+                    },
+                ]),
+            },
+            ABPerson {
+                name: Some("Bob".into()),
+                id: Some(20000),
+                email: None,
+                phone: Some(vec![PhoneNumber {
+                    number: Some("01234567890".into()),
+                    type_: Some(3),
+                }]),
+            },
         ]),
-    )]);
+    };
 
     // Go abData bytes
     let expected_encoded: &[u8] = &[
@@ -1164,22 +1290,18 @@ fn test_addressbook_full_pipeline() {
         11, 48, 255, 0, 49, 50, 51, 52, 53, 54, 55, 56, 3, 57, 48,
     ];
 
-    let encoded = codec::encode(&schema, st, &value).unwrap();
+    let st = schema.get_type("AddressBook").unwrap();
+    let encoded = sproto::serde::to_bytes(&schema, st, &value).unwrap();
     assert_eq!(&encoded, expected_encoded, "encode mismatch");
 
     let packed = pack::pack(&encoded);
     assert_eq!(&packed, expected_packed, "pack mismatch");
 
     let unpacked = pack::unpack(&packed).unwrap();
-    let decoded = codec::decode(&schema, st, &unpacked[..encoded.len()]).unwrap();
-    let persons = decoded.get("person").unwrap().as_array().unwrap();
+    let decoded: AddressBookDec =
+        sproto::serde::from_bytes(&schema, st, &unpacked[..encoded.len()]).unwrap();
+    let persons = decoded.person.unwrap();
     assert_eq!(persons.len(), 2);
-    assert_eq!(
-        persons[0].get("name"),
-        Some(&SprotoValue::Str("Alice".into()))
-    );
-    assert_eq!(
-        persons[1].get("name"),
-        Some(&SprotoValue::Str("Bob".into()))
-    );
+    assert_eq!(persons[0].name.as_deref(), Some("Alice"));
+    assert_eq!(persons[1].name.as_deref(), Some("Bob"));
 }

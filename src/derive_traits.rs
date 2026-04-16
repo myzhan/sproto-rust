@@ -28,7 +28,16 @@ use crate::error::{DecodeError, EncodeError};
 /// ```
 pub trait SprotoEncode {
     /// Encode this value to sproto binary format.
-    fn sproto_encode(&self) -> Result<Vec<u8>, EncodeError>;
+    fn sproto_encode(&self) -> Result<Vec<u8>, EncodeError> {
+        let mut buf = Vec::new();
+        self.sproto_encode_to(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Encode this value, appending to the provided buffer.
+    ///
+    /// This avoids intermediate allocations when encoding nested structs.
+    fn sproto_encode_to(&self, buf: &mut Vec<u8>) -> Result<(), EncodeError>;
 }
 
 /// Trait for types that can be decoded from sproto binary format.

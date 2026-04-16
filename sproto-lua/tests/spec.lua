@@ -14,7 +14,7 @@ local function read_file(path)
 end
 
 -- Path to testdata directory (relative to sproto-lua)
-local testdata = "../testdata/"
+local testdata = "../tests/testdata/"
 
 -- =============================================================================
 -- Basic Functionality Tests
@@ -948,8 +948,8 @@ describe("cross-compatibility with C/Lua reference", function()
             sp = sproto.load_binary(data)
         end)
 
-        it("decodes example1 (Person: Alice)", function()
-            local encoded = read_file(testdata .. "example1_encoded.bin")
+        it("decodes simple_struct (Person: Alice)", function()
+            local encoded = read_file(testdata .. "simple_struct_encoded.bin")
             local decoded = sp:decode("Person", encoded)
             
             assert.are.equal("Alice", decoded.name)
@@ -957,8 +957,8 @@ describe("cross-compatibility with C/Lua reference", function()
             assert.are.equal(false, decoded.marital)
         end)
 
-        it("decodes example2 (Person with children)", function()
-            local encoded = read_file(testdata .. "example2_encoded.bin")
+        it("decodes struct_array (Person with children)", function()
+            local encoded = read_file(testdata .. "struct_array_encoded.bin")
             local decoded = sp:decode("Person", encoded)
             
             assert.are.equal("Bob", decoded.name)
@@ -971,8 +971,8 @@ describe("cross-compatibility with C/Lua reference", function()
             assert.are.equal(5, decoded.children[2].age)
         end)
 
-        it("decodes example3 (Data: integer array)", function()
-            local encoded = read_file(testdata .. "example3_encoded.bin")
+        it("decodes number_array (Data: integer array)", function()
+            local encoded = read_file(testdata .. "number_array_encoded.bin")
             local decoded = sp:decode("Data", encoded)
             
             assert.is_table(decoded.numbers)
@@ -982,8 +982,8 @@ describe("cross-compatibility with C/Lua reference", function()
             end
         end)
 
-        it("decodes example4 (Data: large integers)", function()
-            local encoded = read_file(testdata .. "example4_encoded.bin")
+        it("decodes big_number_array (Data: large integers)", function()
+            local encoded = read_file(testdata .. "big_number_array_encoded.bin")
             local decoded = sp:decode("Data", encoded)
             
             assert.is_table(decoded.numbers)
@@ -993,8 +993,8 @@ describe("cross-compatibility with C/Lua reference", function()
             assert.are.equal((1 << 32) + 3, decoded.numbers[3])
         end)
 
-        it("decodes example5 (Data: boolean array)", function()
-            local encoded = read_file(testdata .. "example5_encoded.bin")
+        it("decodes bool_array (Data: boolean array)", function()
+            local encoded = read_file(testdata .. "bool_array_encoded.bin")
             local decoded = sp:decode("Data", encoded)
             
             assert.is_table(decoded.bools)
@@ -1004,16 +1004,16 @@ describe("cross-compatibility with C/Lua reference", function()
             assert.are.equal(false, decoded.bools[3])
         end)
 
-        it("decodes example6 (Data: large negative integer)", function()
-            local encoded = read_file(testdata .. "example6_encoded.bin")
+        it("decodes number (Data: large negative integer)", function()
+            local encoded = read_file(testdata .. "number_encoded.bin")
             local decoded = sp:decode("Data", encoded)
             
             assert.are.equal(100000, decoded.number)
             assert.are.equal(-10000000000, decoded.bignumber)
         end)
 
-        it("decodes example7 (Data: double and double array)", function()
-            local encoded = read_file(testdata .. "example7_encoded.bin")
+        it("decodes double (Data: double and double array)", function()
+            local encoded = read_file(testdata .. "double_encoded.bin")
             local decoded = sp:decode("Data", encoded)
             
             assert.is_near(0.01171875, decoded.double, 0.0000001)
@@ -1024,8 +1024,8 @@ describe("cross-compatibility with C/Lua reference", function()
             assert.is_near(4, decoded.doubles[3], 0.0000001)
         end)
 
-        it("decodes example8 (Data: fixed point number)", function()
-            local encoded = read_file(testdata .. "example8_encoded.bin")
+        it("decodes fixed_point (Data: fixed point number)", function()
+            local encoded = read_file(testdata .. "fixed_point_encoded.bin")
             local decoded = sp:decode("Data", encoded)
             
             -- fpn is integer(2), stored as 182 (1.82 * 100)
@@ -1033,8 +1033,8 @@ describe("cross-compatibility with C/Lua reference", function()
         end)
 
         -- Test pack/unpack with reference data
-        it("unpacks example1_packed", function()
-            local packed = read_file(testdata .. "example1_packed.bin")
+        it("unpacks simple_struct_packed", function()
+            local packed = read_file(testdata .. "simple_struct_packed.bin")
             local unpacked = sproto.unpack(packed)
             local decoded = sp:decode("Person", unpacked)
             
@@ -1042,8 +1042,8 @@ describe("cross-compatibility with C/Lua reference", function()
             assert.are.equal(13, decoded.age)
         end)
 
-        it("unpacks example2_packed", function()
-            local packed = read_file(testdata .. "example2_packed.bin")
+        it("unpacks struct_array_packed", function()
+            local packed = read_file(testdata .. "struct_array_packed.bin")
             local unpacked = sproto.unpack(packed)
             local decoded = sp:decode("Person", unpacked)
             

@@ -389,7 +389,7 @@ fn build_sproto(raw_types: Vec<RawType>, raw_protocols: Vec<RawProtocol>) -> Res
             };
 
             fields.push(Field {
-                name: rf.name.clone(),
+                name: rf.name.as_str().into(),
                 tag: rf.tag,
                 field_type,
                 is_array: rf.array,
@@ -405,12 +405,7 @@ fn build_sproto(raw_types: Vec<RawType>, raw_protocols: Vec<RawProtocol>) -> Res
         let (base_tag, maxn) = compute_base_tag_and_maxn(&fields);
 
         types_by_name.insert(rt.name.clone(), idx);
-        types_list.push(SprotoType {
-            name: rt.name.clone(),
-            fields,
-            base_tag,
-            maxn,
-        });
+        types_list.push(SprotoType::new(rt.name.clone(), fields, base_tag, maxn));
     }
 
     // Build protocols

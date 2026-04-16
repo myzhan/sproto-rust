@@ -160,7 +160,7 @@ pub fn build_schema(items: Vec<AstItem>) -> Result<Sproto, ParseError> {
             }
 
             fields.push(Field {
-                name: rf.name.clone(),
+                name: rf.name.as_str().into(),
                 tag: rf.tag as u16,
                 field_type,
                 is_array: rf.is_array,
@@ -176,12 +176,7 @@ pub fn build_schema(items: Vec<AstItem>) -> Result<Sproto, ParseError> {
         // Compute base_tag and maxn (matching C logic)
         let (base_tag, maxn) = compute_base_tag_and_maxn(&fields);
 
-        types_list.push(SprotoType {
-            name: type_name.clone(),
-            fields,
-            base_tag,
-            maxn,
-        });
+        types_list.push(SprotoType::new(type_name.clone(), fields, base_tag, maxn));
     }
 
     // Phase 4: Build protocols.
@@ -416,10 +411,10 @@ mod tests {
         let sproto = build_schema(items).unwrap();
         let t = sproto.get_type("Person").unwrap();
         assert_eq!(t.fields.len(), 3);
-        assert_eq!(t.fields[0].name, "name");
+        assert_eq!(&*t.fields[0].name, "name");
         assert_eq!(t.fields[0].tag, 0);
-        assert_eq!(t.fields[1].name, "age");
-        assert_eq!(t.fields[2].name, "marital");
+        assert_eq!(&*t.fields[1].name, "age");
+        assert_eq!(&*t.fields[2].name, "marital");
         assert_eq!(t.base_tag, 0);
     }
 

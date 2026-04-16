@@ -108,14 +108,18 @@ pub fn derive_decode(input: &DeriveInput) -> Result<TokenStream> {
     // Generate match arms for each tag
     let match_arms: Vec<_> = sorted_fields
         .iter()
-        .map(|(field, field_type, _ty)| {
+        .map(|(field, field_type, ty)| {
             let tag = field.tag;
             let ident = &field.ident;
 
+            // Resolve the inner type for Struct fields
+            let (_, _, inner_type) = analyze_type(ty);
+            let inner_ty = inner_type.unwrap_or(ty);
+
             let decode_logic = if field.is_vec {
-                generate_array_decode(ident, field.is_optional, field.use_default, *field_type)
+                generate_array_decode(ident, field.is_optional, field.use_default, *field_type, inner_ty)
             } else {
-                generate_scalar_decode(ident, field.is_optional, field.use_default, *field_type)
+                generate_scalar_decode(ident, field.is_optional, field.use_default, *field_type, inner_ty)
             };
 
             quote! {
@@ -258,6 +262,7 @@ enum FieldTypeInfo {
     Double,
     String,
     Binary,
+    Struct,
 }
 
 /// Analyze a type to determine if it's Option<T> or Vec<T>, returning inner type.
@@ -319,11 +324,11 @@ fn rust_type_to_field_type_info(ty: &Type) -> FieldTypeInfo {
                     }
                     FieldTypeInfo::Integer
                 }
-                _ => FieldTypeInfo::String,
+                _ => FieldTypeInfo::Struct,
             };
         }
     }
-    FieldTypeInfo::String
+    FieldTypeInfo::Struct
 }
 
 /// Generate decoding code for a scalar (non-array) field
@@ -332,6 +337,7 @@ fn generate_scalar_decode(
     is_optional: bool,
     use_default: bool,
     field_type: FieldTypeInfo,
+    inner_ty: &Type,
 ) -> TokenStream {
     let decode_value = match field_type {
         FieldTypeInfo::Integer => quote! {
@@ -382,6 +388,13 @@ fn generate_scalar_decode(
                 decoded = Some(content.to_vec());
             }
         },
+        FieldTypeInfo::Struct => quote! {
+            if inline_val.is_none() {
+                let sz = read_u32_le(&field_data_slice[0..]) as usize;
+                let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+                decoded = Some(::sproto::SprotoDecode::sproto_decode(content)?);
+            }
+        },
     };
 
     let type_hint = match field_type {
@@ -390,6 +403,7 @@ fn generate_scalar_decode(
         FieldTypeInfo::Double => quote! { Option<f64> },
         FieldTypeInfo::String => quote! { Option<String> },
         FieldTypeInfo::Binary => quote! { Option<Vec<u8>> },
+        FieldTypeInfo::Struct => quote! { Option<#inner_ty> },
     };
 
     if is_optional {
@@ -421,6 +435,7 @@ fn generate_array_decode(
     is_optional: bool,
     use_default: bool,
     field_type: FieldTypeInfo,
+    inner_ty: &Type,
 ) -> TokenStream {
     let decode_array = match field_type {
         FieldTypeInfo::Integer => quote! {
@@ -503,6 +518,18 @@ fn generate_array_decode(
             }
             decoded = Some(arr);
         },
+        FieldTypeInfo::Struct => quote! {
+            let sz = read_u32_le(&field_data_slice[0..]) as usize;
+            let mut content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
+            let mut arr: Vec<#inner_ty> = Vec::new();
+            while !content.is_empty() {
+                let elem_sz = read_u32_le(content) as usize;
+                let elem_data = &content[SIZEOF_LENGTH..SIZEOF_LENGTH + elem_sz];
+                arr.push(::sproto::SprotoDecode::sproto_decode(elem_data)?);
+                content = &content[SIZEOF_LENGTH + elem_sz..];
+            }
+            decoded = Some(arr);
+        },
     };
 
     let type_hint = match field_type {
@@ -511,6 +538,7 @@ fn generate_array_decode(
         FieldTypeInfo::Double => quote! { Option<Vec<f64>> },
         FieldTypeInfo::String => quote! { Option<Vec<String>> },
         FieldTypeInfo::Binary => quote! { Option<Vec<Vec<u8>>> },
+        FieldTypeInfo::Struct => quote! { Option<Vec<#inner_ty>> },
     };
 
     if is_optional {

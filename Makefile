@@ -1,4 +1,4 @@
-.PHONY: all build test benchmark clean doc check fmt lint lua-build lua-test
+.PHONY: all build test benchmark clean doc check fmt lint lua-build lua-test benchmark-compare
 
 all: build
 
@@ -66,3 +66,7 @@ lua-build:
 # Test Lua binding
 lua-test: lua-build
 	cd sproto-lua && LUA_CPATH="./?.so;;" busted tests/spec.lua
+
+# Run cross-language benchmark comparison (Go vs Rust)
+benchmark-compare:
+	bash benchmark/benchall.sh

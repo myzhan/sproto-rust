@@ -54,12 +54,12 @@ write_file("person_data_schema.bin", person_data_schema_bin)
 
 local sp = sproto.new(person_data_schema_bin)
 
--- Example 1: Person { name="Alice", age=13, marital=false }
+-- Example 1: simple_struct -- Person { name="Alice", age=13, marital=false }
 local ex1 = sp:encode("Person", { name = "Alice", age = 13, marital = false })
-write_file("example1_encoded.bin", ex1)
-print("  example1: " .. hexdump(ex1))
+write_file("simple_struct_encoded.bin", ex1)
+print("  simple_struct: " .. hexdump(ex1))
 
--- Example 2: Person with children
+-- Example 2: struct_array -- Person with children
 local ex2 = sp:encode("Person", {
     name = "Bob",
     age = 40,
@@ -68,59 +68,59 @@ local ex2 = sp:encode("Person", {
         { name = "Carol", age = 5 },
     }
 })
-write_file("example2_encoded.bin", ex2)
-print("  example2: " .. hexdump(ex2))
+write_file("struct_array_encoded.bin", ex2)
+print("  struct_array: " .. hexdump(ex2))
 
--- Example 3: Data { numbers = {1,2,3,4,5} }
+-- Example 3: number_array -- Data { numbers = {1,2,3,4,5} }
 local ex3 = sp:encode("Data", { numbers = { 1, 2, 3, 4, 5 } })
-write_file("example3_encoded.bin", ex3)
-print("  example3: " .. hexdump(ex3))
+write_file("number_array_encoded.bin", ex3)
+print("  number_array: " .. hexdump(ex3))
 
--- Example 4: Data { numbers = {(1<<32)+1, (1<<32)+2, (1<<32)+3} }
+-- Example 4: big_number_array -- Data { numbers = {(1<<32)+1, (1<<32)+2, (1<<32)+3} }
 local ex4 = sp:encode("Data", {
     numbers = { (1<<32)+1, (1<<32)+2, (1<<32)+3 }
 })
-write_file("example4_encoded.bin", ex4)
-print("  example4: " .. hexdump(ex4))
+write_file("big_number_array_encoded.bin", ex4)
+print("  big_number_array: " .. hexdump(ex4))
 
--- Example 5: Data { bools = {false, true, false} }
+-- Example 5: bool_array -- Data { bools = {false, true, false} }
 local ex5 = sp:encode("Data", { bools = { false, true, false } })
-write_file("example5_encoded.bin", ex5)
-print("  example5: " .. hexdump(ex5))
+write_file("bool_array_encoded.bin", ex5)
+print("  bool_array: " .. hexdump(ex5))
 
--- Example 6: Data { number=100000, bignumber=-10000000000 }
+-- Example 6: number -- Data { number=100000, bignumber=-10000000000 }
 local ex6 = sp:encode("Data", { number = 100000, bignumber = -10000000000 })
-write_file("example6_encoded.bin", ex6)
-print("  example6: " .. hexdump(ex6))
+write_file("number_encoded.bin", ex6)
+print("  number: " .. hexdump(ex6))
 
--- Example 7: Data { double=0.01171875, doubles={0.01171875, 23, 4} }
+-- Example 7: double -- Data { double=0.01171875, doubles={0.01171875, 23, 4} }
 local ex7 = sp:encode("Data", {
     double = 0.01171875,
     doubles = { 0.01171875, 23, 4 }
 })
-write_file("example7_encoded.bin", ex7)
-print("  example7: " .. hexdump(ex7))
+write_file("double_encoded.bin", ex7)
+print("  double: " .. hexdump(ex7))
 
--- Example 8: Data { fpn = 1.82 }
+-- Example 8: fixed_point -- Data { fpn = 1.82 }
 local ex8 = sp:encode("Data", { fpn = 1.82 })
-write_file("example8_encoded.bin", ex8)
-print("  example8: " .. hexdump(ex8))
+write_file("fixed_point_encoded.bin", ex8)
+print("  fixed_point: " .. hexdump(ex8))
 
 -- Packed versions
-write_file("example1_packed.bin", sp:pencode("Person", { name = "Alice", age = 13, marital = false }))
-write_file("example2_packed.bin", sp:pencode("Person", {
+write_file("simple_struct_packed.bin", sp:pencode("Person", { name = "Alice", age = 13, marital = false }))
+write_file("struct_array_packed.bin", sp:pencode("Person", {
     name = "Bob", age = 40,
     children = {
         { name = "Alice", age = 13 },
         { name = "Carol", age = 5 },
     }
 }))
-write_file("example3_packed.bin", sp:pencode("Data", { numbers = { 1, 2, 3, 4, 5 } }))
-write_file("example4_packed.bin", sp:pencode("Data", { numbers = { (1<<32)+1, (1<<32)+2, (1<<32)+3 } }))
-write_file("example5_packed.bin", sp:pencode("Data", { bools = { false, true, false } }))
-write_file("example6_packed.bin", sp:pencode("Data", { number = 100000, bignumber = -10000000000 }))
-write_file("example7_packed.bin", sp:pencode("Data", { double = 0.01171875, doubles = { 0.01171875, 23, 4 } }))
-write_file("example8_packed.bin", sp:pencode("Data", { fpn = 1.82 }))
+write_file("number_array_packed.bin", sp:pencode("Data", { numbers = { 1, 2, 3, 4, 5 } }))
+write_file("big_number_array_packed.bin", sp:pencode("Data", { numbers = { (1<<32)+1, (1<<32)+2, (1<<32)+3 } }))
+write_file("bool_array_packed.bin", sp:pencode("Data", { bools = { false, true, false } }))
+write_file("number_packed.bin", sp:pencode("Data", { number = 100000, bignumber = -10000000000 }))
+write_file("double_packed.bin", sp:pencode("Data", { double = 0.01171875, doubles = { 0.01171875, 23, 4 } }))
+write_file("fixed_point_packed.bin", sp:pencode("Data", { fpn = 1.82 }))
 
 -- =============================================================================
 -- Schema 2: AddressBook (map / indexed array)
