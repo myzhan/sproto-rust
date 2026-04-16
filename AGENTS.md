@@ -29,7 +29,7 @@ tests/                  Integration tests
   testdata/             C/Lua-generated binary fixture files (.bin)
     generate.lua        Lua script to regenerate fixtures
     build.sh            Build script (requires Lua 5.3+ and C sproto)
-benchmark/              Performance benchmarks
+benches/              Performance benchmarks
   sproto_bench.rs       Criterion micro-benchmarks (cargo bench)
   benchmark.rs          Cross-language comparison (cargo example)
   benchall.sh           Automated Rust vs Go benchmark runner
@@ -55,7 +55,7 @@ make ci
 
 # Benchmarks
 cargo bench --bench sproto_bench            # criterion benchmarks
-bash benchmark/benchall.sh [COUNT]          # Rust vs Go comparison
+bash benches/benchall.sh [COUNT]          # Rust vs Go comparison
 ```
 
 ## Feature Flags

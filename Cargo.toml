@@ -3,6 +3,8 @@ name = "sproto"
 version = "0.1.0"
 edition = "2021"
 description = "Rust implementation of the sproto binary serialization protocol"
+autobenches = false
+autoexamples = false
 
 [features]
 default = ["derive"]
@@ -23,11 +25,11 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "sproto_bench"
 harness = false
-path = "benchmark/sproto_bench.rs"
+path = "benches/sproto_bench.rs"
 
 [[example]]
 name = "benchmark"
-path = "benchmark/benchmark.rs"
+path = "benches/benchmark.rs"
 
 [profile.release]
 lto = true

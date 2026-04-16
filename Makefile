@@ -69,4 +69,4 @@ lua-test: lua-build
 
 # Run cross-language benchmark comparison (Go vs Rust)
 benchmark-compare:
-	bash benchmark/benchall.sh
+	bash benches/benchall.sh

@@ -39,7 +39,7 @@ sproto-rust/
     testdata/               -- C/Lua 生成的二进制固定文件
       generate.lua          -- 生成固定文件的 Lua 脚本
       *.bin                 -- 各种编码/打包/模式的二进制文件
-  benchmark/                -- 基准测试
+  benches/                -- 基准测试
     sproto_bench.rs         -- criterion 微基准测试
     benchmark.rs            -- 跨语言对比基准（cargo example）
     benchall.sh             -- 自动化 Rust/Go 对比测试脚本
@@ -165,14 +165,14 @@ cargo bench -- decode
 cargo bench -- pack
 ```
 
-基准测试文件位于 `benchmark/sproto_bench.rs`，覆盖：
+基准测试文件位于 `benches/sproto_bench.rs`，覆盖：
 - encode / decode（Serde API 和 Derive API）
 - pack / unpack
 - 不同数据复杂度的消息（简单 Person、复杂 UserProfile、大数组 DataSet）
 
 ### 跨语言基准测试
 
-`benchmark/benchmark.rs` 是一个 cargo example，支持与 Go 实现对比：
+`benches/benchmark.rs` 是一个 cargo example，支持与 Go 实现对比：
 
 ```bash
 # 构建并运行 Rust 基准
@@ -188,10 +188,10 @@ cargo build --release --example benchmark
 
 ```bash
 # 运行 Rust + Go 完整对比（需要 Go 环境和 gosproto 项目）
-bash benchmark/benchall.sh 1000000
+bash benches/benchall.sh 1000000
 
 # 仅运行 Rust 部分
-bash benchmark/benchall.sh
+bash benches/benchall.sh
 ```
 
 脚本输出格式化的对比表格，包含 Rust Serde API 与 Go (reflect/codec) 的跨语言对比。
