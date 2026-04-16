@@ -3,11 +3,7 @@
 use sproto::binary_schema;
 
 fn testdata(name: &str) -> Vec<u8> {
-    let path = format!(
-        "{}/tests/testdata/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        name
-    );
+    let path = format!("{}/tests/testdata/{}", env!("CARGO_MANIFEST_DIR"), name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e))
 }
 
@@ -42,7 +38,9 @@ fn test_load_addressbook_schema() {
     let data = testdata("addressbook_schema.bin");
     let sproto = binary_schema::load_binary(&data).unwrap();
 
-    let ab = sproto.get_type("AddressBook").expect("AddressBook type missing");
+    let ab = sproto
+        .get_type("AddressBook")
+        .expect("AddressBook type missing");
     assert_eq!(ab.fields.len(), 2);
 
     // person field should be array with key
@@ -72,7 +70,9 @@ fn test_load_rpc_schema() {
     assert_eq!(pkg.fields.len(), 3); // type, session, ud
 
     // Check protocols
-    let foobar = sproto.get_protocol("foobar").expect("foobar protocol missing");
+    let foobar = sproto
+        .get_protocol("foobar")
+        .expect("foobar protocol missing");
     assert_eq!(foobar.tag, 1);
     assert!(foobar.request.is_some());
     assert!(foobar.response.is_some());
@@ -86,7 +86,9 @@ fn test_load_rpc_schema() {
     assert_eq!(bar.tag, 3);
     assert!(bar.confirm);
 
-    let bh = sproto.get_protocol("blackhole").expect("blackhole protocol missing");
+    let bh = sproto
+        .get_protocol("blackhole")
+        .expect("blackhole protocol missing");
     assert_eq!(bh.tag, 4);
     assert!(bh.request.is_none());
     assert!(bh.response.is_none());

@@ -40,24 +40,34 @@ use crate::types::*;
 pub fn load_binary(data: &[u8]) -> Result<Sproto, DecodeError> {
     let sz = data.len();
     if sz < SIZEOF_HEADER {
-        return Err(DecodeError::Truncated { need: SIZEOF_HEADER, have: sz });
+        return Err(DecodeError::Truncated {
+            need: SIZEOF_HEADER,
+            have: sz,
+        });
     }
 
     let fn_count = read_u16_le(data) as usize;
     if fn_count == 0 || fn_count > 2 {
-        return Err(DecodeError::InvalidData("group must have 1 or 2 fields".into()));
+        return Err(DecodeError::InvalidData(
+            "group must have 1 or 2 fields".into(),
+        ));
     }
 
     let field_part_end = SIZEOF_HEADER + fn_count * SIZEOF_FIELD;
     if sz < field_part_end {
-        return Err(DecodeError::Truncated { need: field_part_end, have: sz });
+        return Err(DecodeError::Truncated {
+            need: field_part_end,
+            have: sz,
+        });
     }
 
     // All fields in group must be 0 (data in data part)
     for i in 0..fn_count {
         let v = read_u16_le(&data[SIZEOF_HEADER + i * SIZEOF_FIELD..]);
         if v != 0 {
-            return Err(DecodeError::InvalidData("group fields must be in data part".into()));
+            return Err(DecodeError::InvalidData(
+                "group fields must be in data part".into(),
+            ));
         }
     }
 
@@ -67,10 +77,14 @@ pub fn load_binary(data: &[u8]) -> Result<Sproto, DecodeError> {
     let raw_types: Vec<RawType>;
     {
         if content_offset + SIZEOF_LENGTH > sz {
-            return Err(DecodeError::Truncated { need: content_offset + SIZEOF_LENGTH, have: sz });
+            return Err(DecodeError::Truncated {
+                need: content_offset + SIZEOF_LENGTH,
+                have: sz,
+            });
         }
         let arr_sz = read_u32_le(&data[content_offset..]) as usize;
-        let arr_data = &data[content_offset + SIZEOF_LENGTH..content_offset + SIZEOF_LENGTH + arr_sz];
+        let arr_data =
+            &data[content_offset + SIZEOF_LENGTH..content_offset + SIZEOF_LENGTH + arr_sz];
         raw_types = decode_type_array(arr_data)?;
         content_offset += SIZEOF_LENGTH + arr_sz;
     }
@@ -79,10 +93,14 @@ pub fn load_binary(data: &[u8]) -> Result<Sproto, DecodeError> {
     let mut raw_protocols: Vec<RawProtocol> = Vec::new();
     if fn_count == 2 {
         if content_offset + SIZEOF_LENGTH > sz {
-            return Err(DecodeError::Truncated { need: content_offset + SIZEOF_LENGTH, have: sz });
+            return Err(DecodeError::Truncated {
+                need: content_offset + SIZEOF_LENGTH,
+                have: sz,
+            });
         }
         let arr_sz = read_u32_le(&data[content_offset..]) as usize;
-        let arr_data = &data[content_offset + SIZEOF_LENGTH..content_offset + SIZEOF_LENGTH + arr_sz];
+        let arr_data =
+            &data[content_offset + SIZEOF_LENGTH..content_offset + SIZEOF_LENGTH + arr_sz];
         raw_protocols = decode_protocol_array(arr_data)?;
     }
 
@@ -99,7 +117,7 @@ struct RawType {
 
 struct RawField {
     name: String,
-    builtin: Option<u16>,  // 0=integer, 1=boolean, 2=string, 3=double
+    builtin: Option<u16>, // 0=integer, 1=boolean, 2=string, 3=double
     type_index: Option<u16>,
     tag: u16,
     array: bool,
@@ -125,13 +143,19 @@ type DecodedFields<'a> = Vec<(u16, Option<i32>, &'a [u8])>;
 fn decode_struct_fields(data: &[u8]) -> Result<DecodedFields<'_>, DecodeError> {
     let sz = data.len();
     if sz < SIZEOF_HEADER {
-        return Err(DecodeError::Truncated { need: SIZEOF_HEADER, have: sz });
+        return Err(DecodeError::Truncated {
+            need: SIZEOF_HEADER,
+            have: sz,
+        });
     }
 
     let fn_count = read_u16_le(data) as usize;
     let field_end = SIZEOF_HEADER + fn_count * SIZEOF_FIELD;
     if sz < field_end {
-        return Err(DecodeError::Truncated { need: field_end, have: sz });
+        return Err(DecodeError::Truncated {
+            need: field_end,
+            have: sz,
+        });
     }
 
     let mut results = Vec::new();
@@ -152,11 +176,17 @@ fn decode_struct_fields(data: &[u8]) -> Result<DecodedFields<'_>, DecodeError> {
         if decoded < 0 {
             // Data in data part
             if data_offset + SIZEOF_LENGTH > sz {
-                return Err(DecodeError::Truncated { need: data_offset + SIZEOF_LENGTH, have: sz });
+                return Err(DecodeError::Truncated {
+                    need: data_offset + SIZEOF_LENGTH,
+                    have: sz,
+                });
             }
             let dsz = read_u32_le(&data[data_offset..]) as usize;
             if data_offset + SIZEOF_LENGTH + dsz > sz {
-                return Err(DecodeError::Truncated { need: data_offset + SIZEOF_LENGTH + dsz, have: sz });
+                return Err(DecodeError::Truncated {
+                    need: data_offset + SIZEOF_LENGTH + dsz,
+                    have: sz,
+                });
             }
             let field_data = &data[data_offset + SIZEOF_LENGTH..data_offset + SIZEOF_LENGTH + dsz];
             results.push((tag as u16, None, field_data));
@@ -170,7 +200,8 @@ fn decode_struct_fields(data: &[u8]) -> Result<DecodedFields<'_>, DecodeError> {
 }
 
 fn decode_string(data: &[u8]) -> Result<String, DecodeError> {
-    String::from_utf8(data.to_vec()).map_err(|e| DecodeError::InvalidData(format!("invalid UTF-8: {}", e)))
+    String::from_utf8(data.to_vec())
+        .map_err(|e| DecodeError::InvalidData(format!("invalid UTF-8: {}", e)))
 }
 
 fn decode_type_array(data: &[u8]) -> Result<Vec<RawType>, DecodeError> {
@@ -179,7 +210,10 @@ fn decode_type_array(data: &[u8]) -> Result<Vec<RawType>, DecodeError> {
 
     while offset < data.len() {
         if offset + SIZEOF_LENGTH > data.len() {
-            return Err(DecodeError::Truncated { need: offset + SIZEOF_LENGTH, have: data.len() });
+            return Err(DecodeError::Truncated {
+                need: offset + SIZEOF_LENGTH,
+                have: data.len(),
+            });
         }
         let elem_sz = read_u32_le(&data[offset..]) as usize;
         let elem_data = &data[offset + SIZEOF_LENGTH..offset + SIZEOF_LENGTH + elem_sz];
@@ -210,7 +244,10 @@ fn decode_single_type(data: &[u8]) -> Result<RawType, DecodeError> {
         }
     }
 
-    Ok(RawType { name, fields: raw_fields })
+    Ok(RawType {
+        name,
+        fields: raw_fields,
+    })
 }
 
 fn decode_field_array(data: &[u8]) -> Result<Vec<RawField>, DecodeError> {
@@ -219,7 +256,10 @@ fn decode_field_array(data: &[u8]) -> Result<Vec<RawField>, DecodeError> {
 
     while offset < data.len() {
         if offset + SIZEOF_LENGTH > data.len() {
-            return Err(DecodeError::Truncated { need: offset + SIZEOF_LENGTH, have: data.len() });
+            return Err(DecodeError::Truncated {
+                need: offset + SIZEOF_LENGTH,
+                have: data.len(),
+            });
         }
         let elem_sz = read_u32_le(&data[offset..]) as usize;
         let elem_data = &data[offset + SIZEOF_LENGTH..offset + SIZEOF_LENGTH + elem_sz];
@@ -292,7 +332,10 @@ fn decode_protocol_array(data: &[u8]) -> Result<Vec<RawProtocol>, DecodeError> {
 
     while offset < data.len() {
         if offset + SIZEOF_LENGTH > data.len() {
-            return Err(DecodeError::Truncated { need: offset + SIZEOF_LENGTH, have: data.len() });
+            return Err(DecodeError::Truncated {
+                need: offset + SIZEOF_LENGTH,
+                have: data.len(),
+            });
         }
         let elem_sz = read_u32_le(&data[offset..]) as usize;
         let elem_data = &data[offset + SIZEOF_LENGTH..offset + SIZEOF_LENGTH + elem_sz];
@@ -338,7 +381,13 @@ fn decode_single_protocol(data: &[u8]) -> Result<RawProtocol, DecodeError> {
         }
     }
 
-    Ok(RawProtocol { name, tag, request, response, confirm })
+    Ok(RawProtocol {
+        name,
+        tag,
+        request,
+        response,
+        confirm,
+    })
 }
 
 // --- Build Sproto ---
@@ -347,7 +396,10 @@ fn calc_pow(base: u32, n: u16) -> u32 {
     base.pow(n as u32)
 }
 
-fn build_sproto(raw_types: Vec<RawType>, raw_protocols: Vec<RawProtocol>) -> Result<Sproto, DecodeError> {
+fn build_sproto(
+    raw_types: Vec<RawType>,
+    raw_protocols: Vec<RawProtocol>,
+) -> Result<Sproto, DecodeError> {
     let type_n = raw_types.len();
 
     // Build types
@@ -370,15 +422,26 @@ fn build_sproto(raw_types: Vec<RawType>, raw_protocols: Vec<RawProtocol>) -> Res
                         }
                     }
                     3 => FieldType::Double,
-                    _ => return Err(DecodeError::InvalidData(format!("invalid builtin type {}", b))),
+                    _ => {
+                        return Err(DecodeError::InvalidData(format!(
+                            "invalid builtin type {}",
+                            b
+                        )))
+                    }
                 }
             } else if let Some(ti) = rf.type_index {
                 if (ti as usize) >= type_n {
-                    return Err(DecodeError::InvalidData(format!("type index {} out of range", ti)));
+                    return Err(DecodeError::InvalidData(format!(
+                        "type index {} out of range",
+                        ti
+                    )));
                 }
                 FieldType::Struct(ti as usize)
             } else {
-                return Err(DecodeError::InvalidData(format!("field '{}' has no type", rf.name)));
+                return Err(DecodeError::InvalidData(format!(
+                    "field '{}' has no type",
+                    rf.name
+                )));
             };
 
             let decimal_precision = if rf.builtin == Some(0) {
@@ -418,21 +481,33 @@ fn build_sproto(raw_types: Vec<RawType>, raw_protocols: Vec<RawProtocol>) -> Res
         protocols_by_name.insert(rp.name.clone(), idx);
         protocols_by_tag.insert(rp.tag, idx);
 
-        let request = rp.request.map(|r| {
-            if (r as usize) >= type_n {
-                Err(DecodeError::InvalidData(format!("request type index {} out of range", r)))
-            } else {
-                Ok(r as usize)
-            }
-        }).transpose()?;
+        let request = rp
+            .request
+            .map(|r| {
+                if (r as usize) >= type_n {
+                    Err(DecodeError::InvalidData(format!(
+                        "request type index {} out of range",
+                        r
+                    )))
+                } else {
+                    Ok(r as usize)
+                }
+            })
+            .transpose()?;
 
-        let response = rp.response.map(|r| {
-            if (r as usize) >= type_n {
-                Err(DecodeError::InvalidData(format!("response type index {} out of range", r)))
-            } else {
-                Ok(r as usize)
-            }
-        }).transpose()?;
+        let response = rp
+            .response
+            .map(|r| {
+                if (r as usize) >= type_n {
+                    Err(DecodeError::InvalidData(format!(
+                        "response type index {} out of range",
+                        r
+                    )))
+                } else {
+                    Ok(r as usize)
+                }
+            })
+            .transpose()?;
 
         protocols.push(Protocol {
             name: rp.name,

@@ -52,7 +52,11 @@ jobs:
       - name: Install Lua 5.4 and busted
         run: |
           sudo apt-get update
-          sudo apt-get install -y lua5.4 liblua5.4-dev luarocks
+          sudo apt-get install -y lua5.4 liblua5.4-dev
+          curl -sL https://luarocks.org/releases/luarocks-3.11.1.tar.gz | tar xz
+          cd luarocks-3.11.1
+          ./configure --with-lua-include=/usr/include/lua5.4 --with-lua-bin=/usr/bin --lua-version=5.4 --lua-suffix=5.4
+          make && sudo make install
           sudo luarocks install busted
 
       - name: Cache cargo

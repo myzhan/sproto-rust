@@ -14,23 +14,29 @@ use sproto::{parser, SprotoDecode, SprotoEncode};
 // =============================================================================
 
 fn schema_v1() -> sproto::Sproto {
-    parser::parse(r#"
+    parser::parse(
+        r#"
         .Person {
             name 0 : string
             age 1 : integer
         }
-    "#).unwrap()
+    "#,
+    )
+    .unwrap()
 }
 
 fn schema_v2() -> sproto::Sproto {
-    parser::parse(r#"
+    parser::parse(
+        r#"
         .Person {
             name 0 : string
             age 1 : integer
             email 2 : string
             score 3 : double
         }
-    "#).unwrap()
+    "#,
+    )
+    .unwrap()
 }
 
 // =============================================================================
@@ -275,7 +281,8 @@ mod derive_tests {
         let err = result.unwrap_err();
         assert!(
             format!("{:?}", err).contains("missing required field"),
-            "Error should mention missing field: {:?}", err
+            "Error should mention missing field: {:?}",
+            err
         );
     }
 

@@ -195,7 +195,13 @@ fn create_rpc_schema() -> Sproto {
             echo_response,
         ],
         types_by_name,
-        protocols: vec![login_proto, ping_proto, logout_proto, notify_proto, echo_proto],
+        protocols: vec![
+            login_proto,
+            ping_proto,
+            logout_proto,
+            notify_proto,
+            echo_proto,
+        ],
         protocols_by_name,
         protocols_by_tag,
     }
@@ -346,11 +352,7 @@ fn test_rpc_roundtrip_with_request_response() {
             let response_result = client_host.dispatch(&response_packet).unwrap();
 
             match response_result {
-                DispatchResult::Response {
-                    session,
-                    body,
-                    ud,
-                } => {
+                DispatchResult::Response { session, body, ud } => {
                     assert_eq!(session, 1001);
                     assert!(ud.is_none());
                     let resp: LoginResponseDec = decode_body(&sproto, "login_response", &body);
@@ -388,11 +390,8 @@ fn test_rpc_roundtrip_no_request_body() {
             assert!(responder.is_some());
 
             // Server sends response
-            let response_body = encode_body(
-                &sproto,
-                "ping_response",
-                &PingResponse { time: 1234567890 },
-            );
+            let response_body =
+                encode_body(&sproto, "ping_response", &PingResponse { time: 1234567890 });
             let response_packet = responder.unwrap().respond(&response_body, None).unwrap();
 
             // Client receives response
@@ -401,9 +400,7 @@ fn test_rpc_roundtrip_no_request_body() {
             let response_result = client_host.dispatch(&response_packet).unwrap();
 
             match response_result {
-                DispatchResult::Response {
-                    session, body, ..
-                } => {
+                DispatchResult::Response { session, body, .. } => {
                     assert_eq!(session, 2001);
                     let resp: PingResponseDec = decode_body(&sproto, "ping_response", &body);
                     assert_eq!(resp.time, Some(1234567890));
@@ -457,7 +454,10 @@ fn test_rpc_roundtrip_with_user_data() {
                     data: "echo: test echo".into(),
                 },
             );
-            let response_packet = responder.unwrap().respond(&response_body, Some(99)).unwrap();
+            let response_packet = responder
+                .unwrap()
+                .respond(&response_body, Some(99))
+                .unwrap();
 
             // Client receives
             let mut client_host = Host::new(sproto.clone());
@@ -465,11 +465,7 @@ fn test_rpc_roundtrip_with_user_data() {
             let response_result = client_host.dispatch(&response_packet).unwrap();
 
             match response_result {
-                DispatchResult::Response {
-                    session,
-                    body,
-                    ud,
-                } => {
+                DispatchResult::Response { session, body, ud } => {
                     assert_eq!(session, 3001);
                     assert_eq!(ud, Some(99));
                     let resp: EchoResponseDec = decode_body(&sproto, "echo_response", &body);
@@ -489,13 +485,37 @@ fn test_rpc_multiple_concurrent_sessions() {
     let mut client_sender = server_host.attach(sproto.clone());
 
     // Send multiple requests
-    let body1 = encode_body(&sproto, "echo_request", &EchoRequest { data: "first".into() });
-    let body2 = encode_body(&sproto, "echo_request", &EchoRequest { data: "second".into() });
-    let body3 = encode_body(&sproto, "echo_request", &EchoRequest { data: "third".into() });
+    let body1 = encode_body(
+        &sproto,
+        "echo_request",
+        &EchoRequest {
+            data: "first".into(),
+        },
+    );
+    let body2 = encode_body(
+        &sproto,
+        "echo_request",
+        &EchoRequest {
+            data: "second".into(),
+        },
+    );
+    let body3 = encode_body(
+        &sproto,
+        "echo_request",
+        &EchoRequest {
+            data: "third".into(),
+        },
+    );
 
-    let req1 = client_sender.request("echo", &body1, Some(1), None).unwrap();
-    let req2 = client_sender.request("echo", &body2, Some(2), None).unwrap();
-    let req3 = client_sender.request("echo", &body3, Some(3), None).unwrap();
+    let req1 = client_sender
+        .request("echo", &body1, Some(1), None)
+        .unwrap();
+    let req2 = client_sender
+        .request("echo", &body2, Some(2), None)
+        .unwrap();
+    let req3 = client_sender
+        .request("echo", &body3, Some(3), None)
+        .unwrap();
 
     // Register all sessions
     server_host.register_session(1);
@@ -508,11 +528,7 @@ fn test_rpc_multiple_concurrent_sessions() {
     let result3 = server_host.dispatch(&req3).unwrap();
 
     // Verify all are echo requests
-    for (result, expected_data) in [
-        (result1, "first"),
-        (result2, "second"),
-        (result3, "third"),
-    ] {
+    for (result, expected_data) in [(result1, "first"), (result2, "second"), (result3, "third")] {
         match result {
             DispatchResult::Request { name, body, .. } => {
                 assert_eq!(name, "echo");
@@ -531,9 +547,7 @@ fn test_rpc_request_without_session() {
     let mut client_sender = server_host.attach(sproto.clone());
 
     // Send notify (one-way, no session)
-    let request_packet = client_sender
-        .request("notify", &[], None, None)
-        .unwrap();
+    let request_packet = client_sender.request("notify", &[], None, None).unwrap();
 
     let dispatch_result = server_host.dispatch(&request_packet).unwrap();
 
@@ -570,7 +584,13 @@ fn test_rpc_response_unknown_session() {
     let mut client_sender = server_host.attach(sproto.clone());
 
     // Send a request
-    let request_body = encode_body(&sproto, "echo_request", &EchoRequest { data: "test".into() });
+    let request_body = encode_body(
+        &sproto,
+        "echo_request",
+        &EchoRequest {
+            data: "test".into(),
+        },
+    );
     let request_packet = client_sender
         .request("echo", &request_body, Some(9999), None)
         .unwrap();
@@ -586,12 +606,11 @@ fn test_rpc_response_unknown_session() {
             let response_body = encode_body(
                 &sproto,
                 "echo_response",
-                &EchoResponse { data: "resp".into() },
+                &EchoResponse {
+                    data: "resp".into(),
+                },
             );
-            let response_packet = responder
-                .unwrap()
-                .respond(&response_body, None)
-                .unwrap();
+            let response_packet = responder.unwrap().respond(&response_body, None).unwrap();
 
             // Try to dispatch response with wrong session registered
             let mut client_host = Host::new(sproto.clone());
@@ -666,7 +685,9 @@ fn test_rpc_large_session_id() {
     let request_body = encode_body(
         &sproto,
         "echo_request",
-        &EchoRequest { data: "large session".into() },
+        &EchoRequest {
+            data: "large session".into(),
+        },
     );
     let request_packet = client_sender
         .request("echo", &request_body, Some(large_session), None)
@@ -680,12 +701,11 @@ fn test_rpc_large_session_id() {
             let response_body = encode_body(
                 &sproto,
                 "echo_response",
-                &EchoResponse { data: "resp".into() },
+                &EchoResponse {
+                    data: "resp".into(),
+                },
             );
-            let response_packet = responder
-                .unwrap()
-                .respond(&response_body, None)
-                .unwrap();
+            let response_packet = responder.unwrap().respond(&response_body, None).unwrap();
 
             let mut client_host = Host::new(sproto.clone());
             client_host.register_session(large_session);
@@ -712,7 +732,9 @@ fn test_rpc_unicode_in_request() {
     let request_body = encode_body(
         &sproto,
         "echo_request",
-        &EchoRequest { data: unicode_data.into() },
+        &EchoRequest {
+            data: unicode_data.into(),
+        },
     );
     let request_packet = client_sender
         .request("echo", &request_body, Some(1), None)
@@ -736,11 +758,7 @@ fn test_rpc_empty_string_in_request() {
     let mut server_host = Host::new(sproto.clone());
     let mut client_sender = server_host.attach(sproto.clone());
 
-    let request_body = encode_body(
-        &sproto,
-        "echo_request",
-        &EchoRequest { data: "".into() },
-    );
+    let request_body = encode_body(&sproto, "echo_request", &EchoRequest { data: "".into() });
     let request_packet = client_sender
         .request("echo", &request_body, Some(1), None)
         .unwrap();

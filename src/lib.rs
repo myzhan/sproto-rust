@@ -13,22 +13,22 @@
 //! - **Derive macros** (feature `derive`): Use `#[derive(SprotoEncode, SprotoDecode)]`
 //!   for compile-time inline wire format code with zero runtime overhead.
 
-pub mod error;
-pub mod types;
+pub mod binary_schema;
 pub mod codec;
+pub mod derive_traits;
+pub mod error;
 pub mod pack;
 pub mod parser;
-pub mod binary_schema;
 pub mod rpc;
-pub mod derive_traits;
+pub mod types;
 
 #[cfg(feature = "serde")]
 pub mod serde;
 
+pub use derive_traits::{SprotoDecode, SprotoEncode};
 pub use error::SprotoError;
 pub use types::Sproto;
-pub use derive_traits::{SprotoEncode, SprotoDecode};
 
 // Re-export derive macros when the feature is enabled
 #[cfg(feature = "derive")]
-pub use sproto_derive::{SprotoEncode, SprotoDecode};
+pub use sproto_derive::{SprotoDecode, SprotoEncode};

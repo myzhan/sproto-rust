@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::codec::wire::*;
 use crate::error::{DecodeError, RpcError};
@@ -55,11 +55,7 @@ impl Responder {
     ///
     /// The `body` should be the wire-encoded response message (e.g., produced by
     /// serde or derive encoding). Pass an empty slice if there is no response data.
-    pub fn respond(
-        &self,
-        body: &[u8],
-        ud: Option<i64>,
-    ) -> Result<Vec<u8>, RpcError> {
+    pub fn respond(&self, body: &[u8], ud: Option<i64>) -> Result<Vec<u8>, RpcError> {
         // Response header: no type field (indicates response), session present
         let header = encode_package_header(None, Some(self.session), ud);
         let mut combined = header;
@@ -144,11 +140,9 @@ impl Host {
 
             let proto_name = proto.name.clone();
 
-            let responder = header.session.map(|s| {
-                Box::new(Responder {
-                    session: s as u64,
-                })
-            });
+            let responder = header
+                .session
+                .map(|s| Box::new(Responder { session: s as u64 }));
 
             Ok(DispatchResult::Request {
                 name: proto_name,
@@ -159,9 +153,7 @@ impl Host {
         } else {
             // RESPONSE
             let session_id = header.session.ok_or_else(|| {
-                RpcError::Decode(DecodeError::InvalidData(
-                    "response without session".into(),
-                ))
+                RpcError::Decode(DecodeError::InvalidData("response without session".into()))
             })? as u64;
 
             if !self.sessions.remove(&session_id) {
@@ -200,11 +192,7 @@ impl Host {
 // ---------------------------------------------------------------------------
 
 /// Encode a package header directly into sproto wire format.
-fn encode_package_header(
-    type_tag: Option<u16>,
-    session: Option<u64>,
-    ud: Option<i64>,
-) -> Vec<u8> {
+fn encode_package_header(type_tag: Option<u16>, session: Option<u64>, ud: Option<i64>) -> Vec<u8> {
     let mut descriptors: Vec<u16> = Vec::with_capacity(4);
     let mut data_part: Vec<u8> = Vec::new();
     let mut last_tag: i32 = -1;
@@ -263,10 +251,7 @@ fn encode_header_int(int_val: i64, descriptors: &mut Vec<u16>, data_part: &mut V
             let start = data_part.len();
             data_part.resize(start + SIZEOF_LENGTH + SIZEOF_INT32, 0);
             write_u32_le(&mut data_part[start..], SIZEOF_INT32 as u32);
-            write_u32_le(
-                &mut data_part[start + SIZEOF_LENGTH..],
-                int_val as u32,
-            );
+            write_u32_le(&mut data_part[start + SIZEOF_LENGTH..], int_val as u32);
         } else {
             // Needs 8 bytes
             let start = data_part.len();
@@ -336,8 +321,7 @@ fn decode_package_header(data: &[u8]) -> Result<PackageHeader, DecodeError> {
                     have: size,
                 });
             }
-            let content =
-                &data[data_offset + SIZEOF_LENGTH..data_offset + SIZEOF_LENGTH + dsz];
+            let content = &data[data_offset + SIZEOF_LENGTH..data_offset + SIZEOF_LENGTH + dsz];
             data_offset += SIZEOF_LENGTH + dsz;
 
             if dsz == SIZEOF_INT32 {

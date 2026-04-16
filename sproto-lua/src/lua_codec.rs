@@ -4,7 +4,7 @@
 
 use mlua::prelude::*;
 use sproto::codec::wire::*;
-use sproto::types::{FieldType, Sproto, SprotoType, Field};
+use sproto::types::{Field, FieldType, Sproto, SprotoType};
 
 // ---------------------------------------------------------------------------
 // Encoder: LuaTable → wire bytes
@@ -202,9 +202,7 @@ fn encode_lua_array(
     }
 
     match &field.field_type {
-        FieldType::Integer | FieldType::Double => {
-            encode_lua_integer_array(field, arr, len, buf)
-        }
+        FieldType::Integer | FieldType::Double => encode_lua_integer_array(field, arr, len, buf),
         FieldType::Boolean => encode_lua_boolean_array(arr, len, buf),
         FieldType::String | FieldType::Binary | FieldType::Struct(_) => {
             encode_lua_object_array(lua, sproto, field, arr, len, buf)
@@ -245,7 +243,11 @@ fn encode_lua_integer_array(
         }
     }
 
-    let int_size = if need_64bit { SIZEOF_INT64 } else { SIZEOF_INT32 };
+    let int_size = if need_64bit {
+        SIZEOF_INT64
+    } else {
+        SIZEOF_INT32
+    };
     let data_len = 1 + values.len() * int_size;
 
     let start = buf.len();
@@ -416,11 +418,7 @@ pub fn lua_decode(
     Ok(result)
 }
 
-fn decode_lua_inline(
-    _lua: &Lua,
-    field: &Field,
-    value: u64,
-) -> LuaResult<LuaValue> {
+fn decode_lua_inline(_lua: &Lua, field: &Field, value: u64) -> LuaResult<LuaValue> {
     match &field.field_type {
         FieldType::Integer => Ok(LuaValue::Integer(value as i64)),
         FieldType::Boolean => Ok(LuaValue::Boolean(value != 0)),
@@ -485,12 +483,7 @@ fn decode_lua_field_data(
     }
 }
 
-fn decode_lua_array(
-    lua: &Lua,
-    sproto: &Sproto,
-    field: &Field,
-    data: &[u8],
-) -> LuaResult<LuaValue> {
+fn decode_lua_array(lua: &Lua, sproto: &Sproto, field: &Field, data: &[u8]) -> LuaResult<LuaValue> {
     let sz = read_u32_le(&data[0..]) as usize;
     if sz == 0 {
         let table = lua.create_table()?;
@@ -507,11 +500,7 @@ fn decode_lua_array(
     }
 }
 
-fn decode_lua_integer_array(
-    lua: &Lua,
-    field: &Field,
-    content: &[u8],
-) -> LuaResult<LuaValue> {
+fn decode_lua_integer_array(lua: &Lua, field: &Field, content: &[u8]) -> LuaResult<LuaValue> {
     if content.is_empty() {
         let table = lua.create_table()?;
         return Ok(LuaValue::Table(table));

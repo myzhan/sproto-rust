@@ -454,9 +454,7 @@ fn bench_pack(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::new("small", small_data.len()),
         &small_data,
-        |b, data| {
-            b.iter(|| pack::pack(black_box(data)))
-        },
+        |b, data| b.iter(|| pack::pack(black_box(data))),
     );
 
     // Medium data (UserProfile encoded via serde)
@@ -476,9 +474,7 @@ fn bench_pack(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::new("medium", medium_data.len()),
         &medium_data,
-        |b, data| {
-            b.iter(|| pack::pack(black_box(data)))
-        },
+        |b, data| b.iter(|| pack::pack(black_box(data))),
     );
 
     // Large data (DataSet with 1000 elements via derive)
@@ -492,9 +488,7 @@ fn bench_pack(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::new("large", large_data.len()),
         &large_data,
-        |b, data| {
-            b.iter(|| pack::pack(black_box(data)))
-        },
+        |b, data| b.iter(|| pack::pack(black_box(data))),
     );
 
     group.finish();
@@ -518,9 +512,7 @@ fn bench_unpack(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::new("small", small_packed.len()),
         &small_packed,
-        |b, data| {
-            b.iter(|| pack::unpack(black_box(data)).unwrap())
-        },
+        |b, data| b.iter(|| pack::unpack(black_box(data)).unwrap()),
     );
 
     // Medium data
@@ -541,9 +533,7 @@ fn bench_unpack(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::new("medium", medium_packed.len()),
         &medium_packed,
-        |b, data| {
-            b.iter(|| pack::unpack(black_box(data)).unwrap())
-        },
+        |b, data| b.iter(|| pack::unpack(black_box(data)).unwrap()),
     );
 
     // Large data
@@ -558,9 +548,7 @@ fn bench_unpack(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::new("large", large_packed.len()),
         &large_packed,
-        |b, data| {
-            b.iter(|| pack::unpack(black_box(data)).unwrap())
-        },
+        |b, data| b.iter(|| pack::unpack(black_box(data)).unwrap()),
     );
 
     group.finish();

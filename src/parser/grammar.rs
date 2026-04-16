@@ -1,6 +1,6 @@
-use crate::error::ParseError;
 use super::ast::*;
 use super::lexer::{Lexer, Token};
+use crate::error::ParseError;
 
 /// Parse a sproto schema text into an AST.
 pub fn parse_schema(input: &str) -> Result<Vec<AstItem>, ParseError> {
@@ -20,7 +20,10 @@ pub fn parse_schema(input: &str) -> Result<Vec<AstItem>, ParseError> {
             _ => {
                 return Err(ParseError::Syntax {
                     line: tok.line,
-                    message: format!("expected type definition (.) or protocol name, found {:?}", tok.token),
+                    message: format!(
+                        "expected type definition (.) or protocol name, found {:?}",
+                        tok.token
+                    ),
                 });
             }
         }
@@ -72,7 +75,10 @@ fn parse_members(lexer: &mut Lexer) -> Result<Vec<AstMember>, ParseError> {
             _ => {
                 return Err(ParseError::Syntax {
                     line: tok.line,
-                    message: format!("expected field name, nested type, or '}}', found {:?}", tok.token),
+                    message: format!(
+                        "expected field name, nested type, or '}}', found {:?}",
+                        tok.token
+                    ),
                 });
             }
         }
@@ -113,9 +119,7 @@ fn parse_field(lexer: &mut Lexer) -> Result<AstField, ParseError> {
                 // Empty parens: *Type()
                 String::new()
             }
-            Token::Name(_) => {
-                expect_name(lexer)?
-            }
+            Token::Name(_) => expect_name(lexer)?,
             Token::Number(n) => {
                 let n = *n;
                 lexer.next_token();
@@ -124,7 +128,10 @@ fn parse_field(lexer: &mut Lexer) -> Result<AstField, ParseError> {
             _ => {
                 return Err(ParseError::Syntax {
                     line: tok.line,
-                    message: format!("expected name, number, or ')' in parentheses, found {:?}", tok.token),
+                    message: format!(
+                        "expected name, number, or ')' in parentheses, found {:?}",
+                        tok.token
+                    ),
                 });
             }
         };
@@ -174,7 +181,10 @@ fn parse_protocol_def(lexer: &mut Lexer) -> Result<AstProtocol, ParseError> {
             _ => {
                 return Err(ParseError::Syntax {
                     line: tok.line,
-                    message: format!("expected 'request', 'response', or '}}', found {:?}", tok.token),
+                    message: format!(
+                        "expected 'request', 'response', or '}}', found {:?}",
+                        tok.token
+                    ),
                 });
             }
         }
@@ -275,15 +285,13 @@ mod tests {
         let schema = ".Data { numbers 0 : *integer }";
         let items = parse_schema(schema).unwrap();
         match &items[0] {
-            AstItem::Type(t) => {
-                match &t.members[0] {
-                    AstMember::Field(f) => {
-                        assert!(f.is_array);
-                        assert_eq!(f.type_name, "integer");
-                    }
-                    _ => panic!("expected field"),
+            AstItem::Type(t) => match &t.members[0] {
+                AstMember::Field(f) => {
+                    assert!(f.is_array);
+                    assert_eq!(f.type_name, "integer");
                 }
-            }
+                _ => panic!("expected field"),
+            },
             _ => panic!("expected type"),
         }
     }
@@ -330,15 +338,13 @@ mod tests {
         let schema = ".AddressBook { person 0 : *Person(id) }";
         let items = parse_schema(schema).unwrap();
         match &items[0] {
-            AstItem::Type(t) => {
-                match &t.members[0] {
-                    AstMember::Field(f) => {
-                        assert!(f.is_array);
-                        assert_eq!(f.extra.as_deref(), Some("id"));
-                    }
-                    _ => panic!("expected field"),
+            AstItem::Type(t) => match &t.members[0] {
+                AstMember::Field(f) => {
+                    assert!(f.is_array);
+                    assert_eq!(f.extra.as_deref(), Some("id"));
                 }
-            }
+                _ => panic!("expected field"),
+            },
             _ => panic!("expected type"),
         }
     }

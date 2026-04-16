@@ -56,10 +56,7 @@ pub fn derive_decode(input: &DeriveInput) -> Result<TokenStream> {
         }
 
         let tag = attrs.tag.ok_or_else(|| {
-            syn::Error::new_spanned(
-                &field.ident,
-                "field must have #[sproto(tag = N)] attribute",
-            )
+            syn::Error::new_spanned(&field.ident, "field must have #[sproto(tag = N)] attribute")
         })?;
 
         let (is_optional, is_vec, inner_type) = analyze_type(&field.ty);
@@ -117,9 +114,21 @@ pub fn derive_decode(input: &DeriveInput) -> Result<TokenStream> {
             let inner_ty = inner_type.unwrap_or(ty);
 
             let decode_logic = if field.is_vec {
-                generate_array_decode(ident, field.is_optional, field.use_default, *field_type, inner_ty)
+                generate_array_decode(
+                    ident,
+                    field.is_optional,
+                    field.use_default,
+                    *field_type,
+                    inner_ty,
+                )
             } else {
-                generate_scalar_decode(ident, field.is_optional, field.use_default, *field_type, inner_ty)
+                generate_scalar_decode(
+                    ident,
+                    field.is_optional,
+                    field.use_default,
+                    *field_type,
+                    inner_ty,
+                )
             };
 
             quote! {
@@ -446,7 +455,7 @@ fn generate_array_decode(
                 let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
                 let int_len = content[0] as usize;
                 let values_data = &content[1..];
-                
+
                 if int_len == 4 || int_len == 8 {
                     let count = values_data.len() / int_len;
                     let mut arr: Vec<i64> = Vec::with_capacity(count);
@@ -478,7 +487,7 @@ fn generate_array_decode(
                 let content = &field_data_slice[SIZEOF_LENGTH..SIZEOF_LENGTH + sz];
                 let int_len = content[0] as usize;
                 let values_data = &content[1..];
-                
+
                 if int_len == 8 {
                     let count = values_data.len() / int_len;
                     let mut arr: Vec<f64> = Vec::with_capacity(count);

@@ -18,8 +18,8 @@
 //! local decoded = sp:decode("Person", encoded)
 //! ```
 
-mod lua_codec;
 mod error;
+mod lua_codec;
 mod userdata;
 
 use mlua::prelude::*;

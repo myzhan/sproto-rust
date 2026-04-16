@@ -293,10 +293,7 @@ fn main() {
         std::process::exit(1);
     }
     if !["serde", "derive", "compare"].contains(&api.as_str()) {
-        eprintln!(
-            "Unknown --api: {}. Use: serde, derive, compare",
-            api
-        );
+        eprintln!("Unknown --api: {}. Use: serde, derive, compare", api);
         std::process::exit(1);
     }
 
@@ -317,7 +314,11 @@ fn run_serde_addressbook(mode: &str, count: usize) {
     let packed = pack::pack(&encoded);
 
     let decoded: AddressBook = sproto::serde::from_bytes(&schema, st, &encoded).unwrap();
-    assert_eq!(decoded.person.len(), ab.person.len(), "serde roundtrip failed");
+    assert_eq!(
+        decoded.person.len(),
+        ab.person.len(),
+        "serde roundtrip failed"
+    );
 
     eprintln!(
         "AddressBook(serde): encoded {} bytes, packed {} bytes",
@@ -340,7 +341,11 @@ fn run_derive_addressbook(mode: &str, count: usize) {
     let packed = pack::pack(&encoded);
 
     let decoded = AddressBook::sproto_decode(&encoded).unwrap();
-    assert_eq!(decoded.person.len(), ab.person.len(), "derive roundtrip failed");
+    assert_eq!(
+        decoded.person.len(),
+        ab.person.len(),
+        "derive roundtrip failed"
+    );
 
     eprintln!(
         "AddressBook(derive): encoded {} bytes, packed {} bytes",
@@ -371,11 +376,20 @@ fn run_compare_addressbook(mode: &str, count: usize) {
     let derive_packed = pack::pack(&derive_encoded);
 
     // Verify roundtrip for each API independently
-    let serde_decoded: AddressBook = sproto::serde::from_bytes(&schema, st, &serde_encoded).unwrap();
-    assert_eq!(serde_decoded.person.len(), ab.person.len(), "serde roundtrip failed");
+    let serde_decoded: AddressBook =
+        sproto::serde::from_bytes(&schema, st, &serde_encoded).unwrap();
+    assert_eq!(
+        serde_decoded.person.len(),
+        ab.person.len(),
+        "serde roundtrip failed"
+    );
 
     let derive_decoded = AddressBook::sproto_decode(&derive_encoded).unwrap();
-    assert_eq!(derive_decoded.person.len(), ab.person.len(), "derive roundtrip failed");
+    assert_eq!(
+        derive_decoded.person.len(),
+        ab.person.len(),
+        "derive roundtrip failed"
+    );
 
     eprintln!(
         "AddressBook: serde {} bytes (packed {}), derive {} bytes (packed {})",

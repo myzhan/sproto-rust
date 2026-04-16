@@ -132,7 +132,6 @@ impl SprotoType {
                 .iter()
                 .enumerate()
                 .find(|(_, f)| *f.name == *name)
-                .map(|(i, f)| (i, f))
         } else {
             self.field_by_name
                 .get(name)

@@ -98,14 +98,38 @@ fn pack_nonzero(result: &mut Vec<u8>, word: u64, tag: u8) {
     let b = word.to_le_bytes();
     let mut buf = [0u8; 8];
     let mut n = 0usize;
-    if tag & 0x01 != 0 { buf[n] = b[0]; n += 1; }
-    if tag & 0x02 != 0 { buf[n] = b[1]; n += 1; }
-    if tag & 0x04 != 0 { buf[n] = b[2]; n += 1; }
-    if tag & 0x08 != 0 { buf[n] = b[3]; n += 1; }
-    if tag & 0x10 != 0 { buf[n] = b[4]; n += 1; }
-    if tag & 0x20 != 0 { buf[n] = b[5]; n += 1; }
-    if tag & 0x40 != 0 { buf[n] = b[6]; n += 1; }
-    if tag & 0x80 != 0 { buf[n] = b[7]; n += 1; }
+    if tag & 0x01 != 0 {
+        buf[n] = b[0];
+        n += 1;
+    }
+    if tag & 0x02 != 0 {
+        buf[n] = b[1];
+        n += 1;
+    }
+    if tag & 0x04 != 0 {
+        buf[n] = b[2];
+        n += 1;
+    }
+    if tag & 0x08 != 0 {
+        buf[n] = b[3];
+        n += 1;
+    }
+    if tag & 0x10 != 0 {
+        buf[n] = b[4];
+        n += 1;
+    }
+    if tag & 0x20 != 0 {
+        buf[n] = b[5];
+        n += 1;
+    }
+    if tag & 0x40 != 0 {
+        buf[n] = b[6];
+        n += 1;
+    }
+    if tag & 0x80 != 0 {
+        buf[n] = b[7];
+        n += 1;
+    }
     result.extend_from_slice(&buf[..n]);
 }
 
@@ -168,14 +192,37 @@ pub fn unpack(src: &[u8]) -> Result<Vec<u8>, PackError> {
             let out = &mut result[out_start..];
             let data = &src[i..i + notzero];
             let mut si = 0;
-            if header & 0x01 != 0 { out[0] = data[si]; si += 1; }
-            if header & 0x02 != 0 { out[1] = data[si]; si += 1; }
-            if header & 0x04 != 0 { out[2] = data[si]; si += 1; }
-            if header & 0x08 != 0 { out[3] = data[si]; si += 1; }
-            if header & 0x10 != 0 { out[4] = data[si]; si += 1; }
-            if header & 0x20 != 0 { out[5] = data[si]; si += 1; }
-            if header & 0x40 != 0 { out[6] = data[si]; si += 1; }
-            if header & 0x80 != 0 { out[7] = data[si]; }
+            if header & 0x01 != 0 {
+                out[0] = data[si];
+                si += 1;
+            }
+            if header & 0x02 != 0 {
+                out[1] = data[si];
+                si += 1;
+            }
+            if header & 0x04 != 0 {
+                out[2] = data[si];
+                si += 1;
+            }
+            if header & 0x08 != 0 {
+                out[3] = data[si];
+                si += 1;
+            }
+            if header & 0x10 != 0 {
+                out[4] = data[si];
+                si += 1;
+            }
+            if header & 0x20 != 0 {
+                out[5] = data[si];
+                si += 1;
+            }
+            if header & 0x40 != 0 {
+                out[6] = data[si];
+                si += 1;
+            }
+            if header & 0x80 != 0 {
+                out[7] = data[si];
+            }
             i += notzero;
         }
     }
@@ -193,8 +240,8 @@ mod tests {
         // unpacked: 08 00 00 00 03 00 02 00  19 00 00 00 aa 01 00 00
         // packed:   51 08 03 02  31 19 aa 01
         let unpacked = vec![
-            0x08, 0x00, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00,
-            0x19, 0x00, 0x00, 0x00, 0xaa, 0x01, 0x00, 0x00,
+            0x08, 0x00, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00, 0x19, 0x00, 0x00, 0x00, 0xaa, 0x01,
+            0x00, 0x00,
         ];
         let expected_packed = vec![0x51, 0x08, 0x03, 0x02, 0x31, 0x19, 0xaa, 0x01];
 

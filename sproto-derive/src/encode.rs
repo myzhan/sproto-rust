@@ -55,10 +55,7 @@ pub fn derive_encode(input: &DeriveInput) -> Result<TokenStream> {
         }
 
         let tag = attrs.tag.ok_or_else(|| {
-            syn::Error::new_spanned(
-                &field.ident,
-                "field must have #[sproto(tag = N)] attribute",
-            )
+            syn::Error::new_spanned(&field.ident, "field must have #[sproto(tag = N)] attribute")
         })?;
 
         let (is_optional, is_vec, inner_type) = analyze_type(&field.ty);
@@ -275,7 +272,11 @@ fn generate_field_encode_blocks(sorted_fields: &[&(FieldInfo, FieldTypeInfo)]) -
 }
 
 /// Generate encoding code for a scalar (non-array) field
-fn generate_scalar_encode(ident: &syn::Ident, is_optional: bool, field_type: FieldTypeInfo) -> TokenStream {
+fn generate_scalar_encode(
+    ident: &syn::Ident,
+    is_optional: bool,
+    field_type: FieldTypeInfo,
+) -> TokenStream {
     let encode_value = match field_type {
         FieldTypeInfo::Integer => quote! {
             let int_val = *val as i64;
@@ -352,7 +353,11 @@ fn generate_scalar_encode(ident: &syn::Ident, is_optional: bool, field_type: Fie
 }
 
 /// Generate encoding code for an array field
-fn generate_array_encode(ident: &syn::Ident, is_optional: bool, field_type: FieldTypeInfo) -> TokenStream {
+fn generate_array_encode(
+    ident: &syn::Ident,
+    is_optional: bool,
+    field_type: FieldTypeInfo,
+) -> TokenStream {
     let encode_array = match field_type {
         FieldTypeInfo::Integer => quote! {
             if arr.is_empty() {

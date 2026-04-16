@@ -160,16 +160,23 @@ fn test_derive_nested_struct_array() {
                 name: "Alice".into(),
                 id: 10000,
                 phones: vec![
-                    PhoneNumber { number: "111".into(), phone_type: 1 },
-                    PhoneNumber { number: "222".into(), phone_type: 2 },
+                    PhoneNumber {
+                        number: "111".into(),
+                        phone_type: 1,
+                    },
+                    PhoneNumber {
+                        number: "222".into(),
+                        phone_type: 2,
+                    },
                 ],
             },
             Contact {
                 name: "Bob".into(),
                 id: 20000,
-                phones: vec![
-                    PhoneNumber { number: "333".into(), phone_type: 3 },
-                ],
+                phones: vec![PhoneNumber {
+                    number: "333".into(),
+                    phone_type: 3,
+                }],
             },
         ],
     };
@@ -243,8 +250,14 @@ fn test_derive_recursive_struct() {
             TreeNode {
                 value: 2,
                 children: vec![
-                    TreeNode { value: 4, children: vec![] },
-                    TreeNode { value: 5, children: vec![] },
+                    TreeNode {
+                        value: 4,
+                        children: vec![],
+                    },
+                    TreeNode {
+                        value: 5,
+                        children: vec![],
+                    },
                 ],
             },
             TreeNode {

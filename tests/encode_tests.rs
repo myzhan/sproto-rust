@@ -82,7 +82,11 @@ fn test_encode_simple_struct() {
     };
     let encoded = encode(&sproto, "Person", &value);
     let expected = testdata("simple_struct_encoded.bin");
-    assert_eq!(hexdump(&encoded), hexdump(&expected), "simple_struct encode mismatch");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "simple_struct encode mismatch"
+    );
 }
 
 #[test]
@@ -109,7 +113,11 @@ fn test_encode_struct_array() {
     };
     let encoded = encode(&sproto, "Person", &value);
     let expected = testdata("struct_array_encoded.bin");
-    assert_eq!(hexdump(&encoded), hexdump(&expected), "struct_array encode mismatch");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "struct_array encode mismatch"
+    );
 }
 
 #[test]
@@ -126,7 +134,11 @@ fn test_encode_number_array() {
     };
     let encoded = encode(&sproto, "Data", &value);
     let expected = testdata("number_array_encoded.bin");
-    assert_eq!(hexdump(&encoded), hexdump(&expected), "number_array encode mismatch");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "number_array encode mismatch"
+    );
 }
 
 #[test]
@@ -144,7 +156,11 @@ fn test_encode_big_number_array() {
     };
     let encoded = encode(&sproto, "Data", &value);
     let expected = testdata("big_number_array_encoded.bin");
-    assert_eq!(hexdump(&encoded), hexdump(&expected), "big_number_array encode mismatch");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "big_number_array encode mismatch"
+    );
 }
 
 #[test]
@@ -161,7 +177,11 @@ fn test_encode_bool_array() {
     };
     let encoded = encode(&sproto, "Data", &value);
     let expected = testdata("bool_array_encoded.bin");
-    assert_eq!(hexdump(&encoded), hexdump(&expected), "bool_array encode mismatch");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "bool_array encode mismatch"
+    );
 }
 
 #[test]
@@ -178,7 +198,11 @@ fn test_encode_number() {
     };
     let encoded = encode(&sproto, "Data", &value);
     let expected = testdata("number_encoded.bin");
-    assert_eq!(hexdump(&encoded), hexdump(&expected), "number encode mismatch");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "number encode mismatch"
+    );
 }
 
 #[test]
@@ -195,7 +219,11 @@ fn test_encode_double() {
     };
     let encoded = encode(&sproto, "Data", &value);
     let expected = testdata("double_encoded.bin");
-    assert_eq!(hexdump(&encoded), hexdump(&expected), "double encode mismatch");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "double encode mismatch"
+    );
 }
 
 #[test]
@@ -213,7 +241,11 @@ fn test_encode_fixed_point() {
     };
     let encoded = encode(&sproto, "Data", &value);
     let expected = testdata("fixed_point_encoded.bin");
-    assert_eq!(hexdump(&encoded), hexdump(&expected), "fixed_point encode mismatch");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "fixed_point encode mismatch"
+    );
 }
 
 // =============================================================================
@@ -321,45 +353,42 @@ struct AddressBook {
 
 /// Bytes: Data{bytes:[0x28,0x29,0x30,0x31]}
 const GO_BYTES_FIELD: &[u8] = &[
-    0x02, 0x00, 0x0f, 0x00, 0x00, 0x00,
-    0x04, 0x00, 0x00, 0x00, 0x28, 0x29, 0x30, 0x31,
+    0x02, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x28, 0x29, 0x30, 0x31,
 ];
 
 /// StringArray: Data{strings:["Bob","Alice","Carol"]}
 const GO_STRING_ARRAY: &[u8] = &[
-    0x02, 0x00, 0x0d, 0x00, 0x00, 0x00,
-    0x19, 0x00, 0x00, 0x00,
-    0x03, 0x00, 0x00, 0x00, 0x42, 0x6F, 0x62,
-    0x05, 0x00, 0x00, 0x00, 0x41, 0x6C, 0x69, 0x63, 0x65,
-    0x05, 0x00, 0x00, 0x00, 0x43, 0x61, 0x72, 0x6F, 0x6C,
+    0x02, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x42, 0x6F,
+    0x62, 0x05, 0x00, 0x00, 0x00, 0x41, 0x6C, 0x69, 0x63, 0x65, 0x05, 0x00, 0x00, 0x00, 0x43, 0x61,
+    0x72, 0x6F, 0x6C,
 ];
 
 /// EmptyIntSlice: Data{numbers:[]}
-const GO_EMPTY_INT_SLICE: &[u8] = &[
-    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-];
+const GO_EMPTY_INT_SLICE: &[u8] = &[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// EmptyDoubleSlice: Data{doubles:[]}
-const GO_EMPTY_DOUBLE_SLICE: &[u8] = &[
-    0x02, 0x00, 0x09, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-];
+const GO_EMPTY_DOUBLE_SLICE: &[u8] = &[0x02, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// AddressBook encoded (from Go abData)
 const GO_ADDRESSBOOK: &[u8] = &[
-    1, 0, 0, 0, 122, 0, 0, 0, 68, 0, 0, 0, 4, 0, 0, 0, 34, 78, 1, 0, 0, 0, 5, 0, 0, 0, 65,
-    108, 105, 99, 101, 45, 0, 0, 0, 19, 0, 0, 0, 2, 0, 0, 0, 4, 0, 9, 0, 0, 0, 49, 50, 51, 52,
-    53, 54, 55, 56, 57, 18, 0, 0, 0, 2, 0, 0, 0, 6, 0, 8, 0, 0, 0, 56, 55, 54, 53, 52, 51, 50,
-    49, 46, 0, 0, 0, 4, 0, 0, 0, 66, 156, 1, 0, 0, 0, 3, 0, 0, 0, 66, 111, 98, 25, 0, 0, 0, 21,
-    0, 0, 0, 2, 0, 0, 0, 8, 0, 11, 0, 0, 0, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48,
+    1, 0, 0, 0, 122, 0, 0, 0, 68, 0, 0, 0, 4, 0, 0, 0, 34, 78, 1, 0, 0, 0, 5, 0, 0, 0, 65, 108,
+    105, 99, 101, 45, 0, 0, 0, 19, 0, 0, 0, 2, 0, 0, 0, 4, 0, 9, 0, 0, 0, 49, 50, 51, 52, 53, 54,
+    55, 56, 57, 18, 0, 0, 0, 2, 0, 0, 0, 6, 0, 8, 0, 0, 0, 56, 55, 54, 53, 52, 51, 50, 49, 46, 0,
+    0, 0, 4, 0, 0, 0, 66, 156, 1, 0, 0, 0, 3, 0, 0, 0, 66, 111, 98, 25, 0, 0, 0, 21, 0, 0, 0, 2, 0,
+    0, 0, 8, 0, 11, 0, 0, 0, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48,
 ];
 
 #[test]
 fn test_encode_bytes_field() {
     let schema = go_data_schema();
     let value = GoData {
-        numbers: None, bools: None, number: None, bignumber: None,
-        double: None, doubles: None, strings: None,
+        numbers: None,
+        bools: None,
+        number: None,
+        bignumber: None,
+        double: None,
+        doubles: None,
+        strings: None,
         bytes: Some(vec![0x28, 0x29, 0x30, 0x31]),
     };
     let encoded = encode(&schema, "Data", &value);
@@ -370,8 +399,12 @@ fn test_encode_bytes_field() {
 fn test_encode_string_array() {
     let schema = go_data_schema();
     let value = GoData {
-        numbers: None, bools: None, number: None, bignumber: None,
-        double: None, doubles: None,
+        numbers: None,
+        bools: None,
+        number: None,
+        bignumber: None,
+        double: None,
+        doubles: None,
         strings: Some(vec!["Bob".into(), "Alice".into(), "Carol".into()]),
         bytes: None,
     };
@@ -384,8 +417,13 @@ fn test_encode_empty_int_slice() {
     let schema = go_data_schema();
     let value = GoData {
         numbers: Some(vec![]),
-        bools: None, number: None, bignumber: None,
-        double: None, doubles: None, strings: None, bytes: None,
+        bools: None,
+        number: None,
+        bignumber: None,
+        double: None,
+        doubles: None,
+        strings: None,
+        bytes: None,
     };
     let encoded = encode(&schema, "Data", &value);
     assert_eq!(hexdump(&encoded), hexdump(GO_EMPTY_INT_SLICE));
@@ -395,10 +433,14 @@ fn test_encode_empty_int_slice() {
 fn test_encode_empty_double_slice() {
     let schema = go_data_schema();
     let value = GoData {
-        numbers: None, bools: None, number: None, bignumber: None,
+        numbers: None,
+        bools: None,
+        number: None,
+        bignumber: None,
         double: None,
         doubles: Some(vec![]),
-        strings: None, bytes: None,
+        strings: None,
+        bytes: None,
     };
     let encoded = encode(&schema, "Data", &value);
     assert_eq!(hexdump(&encoded), hexdump(GO_EMPTY_DOUBLE_SLICE));
@@ -414,17 +456,24 @@ fn test_encode_addressbook() {
                 id: Some(10000),
                 email: None,
                 phone: Some(vec![
-                    PhoneNumber { number: "123456789".into(), r#type: 1 },
-                    PhoneNumber { number: "87654321".into(), r#type: 2 },
+                    PhoneNumber {
+                        number: "123456789".into(),
+                        r#type: 1,
+                    },
+                    PhoneNumber {
+                        number: "87654321".into(),
+                        r#type: 2,
+                    },
                 ]),
             },
             GoPerson {
                 name: Some("Bob".into()),
                 id: Some(20000),
                 email: None,
-                phone: Some(vec![
-                    PhoneNumber { number: "01234567890".into(), r#type: 3 },
-                ]),
+                phone: Some(vec![PhoneNumber {
+                    number: "01234567890".into(),
+                    r#type: 3,
+                }]),
             },
         ]),
     };
@@ -453,12 +502,22 @@ fn test_encode_decode_roundtrip_all() {
             "Person" => {
                 let decoded: Person = decode(&sproto, type_name, &original);
                 let reencoded = encode(&sproto, type_name, &decoded);
-                assert_eq!(hexdump(&reencoded), hexdump(&original), "round-trip failed for {}", file);
+                assert_eq!(
+                    hexdump(&reencoded),
+                    hexdump(&original),
+                    "round-trip failed for {}",
+                    file
+                );
             }
             "Data" => {
                 let decoded: Data = decode(&sproto, type_name, &original);
                 let reencoded = encode(&sproto, type_name, &decoded);
-                assert_eq!(hexdump(&reencoded), hexdump(&original), "round-trip failed for {}", file);
+                assert_eq!(
+                    hexdump(&reencoded),
+                    hexdump(&original),
+                    "round-trip failed for {}",
+                    file
+                );
             }
             _ => unreachable!(),
         }

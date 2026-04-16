@@ -207,11 +207,7 @@ struct PersonEnc {
     active: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     score: Option<f64>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        with = "opt_bytes",
-        default
-    )]
+    #[serde(skip_serializing_if = "Option::is_none", with = "opt_bytes", default)]
     data: Option<Vec<u8>>,
 }
 
@@ -429,12 +425,7 @@ fn test_roundtrip_integer_array() {
 #[test]
 fn test_roundtrip_large_integers() {
     let sproto = create_test_schema();
-    let large_values = vec![
-        1i64 << 33,
-        -(1i64 << 40),
-        i64::MAX,
-        i64::MIN,
-    ];
+    let large_values = vec![1i64 << 33, -(1i64 << 40), i64::MAX, i64::MIN];
     let original = DataEnc {
         numbers: Some(large_values.clone()),
         names: None,
@@ -451,7 +442,11 @@ fn test_roundtrip_large_integers() {
 #[test]
 fn test_roundtrip_string_array() {
     let sproto = create_test_schema();
-    let names = vec!["Alice".to_string(), "Bob".to_string(), "Charlie".to_string()];
+    let names = vec![
+        "Alice".to_string(),
+        "Bob".to_string(),
+        "Charlie".to_string(),
+    ];
     let original = DataEnc {
         numbers: None,
         names: Some(names.clone()),
@@ -668,8 +663,8 @@ fn test_pack_unpack_all_ff() {
 #[test]
 fn test_pack_unpack_mixed_data() {
     let data = vec![
-        0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04,
-        0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8,
+        0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9,
+        0xF8,
     ];
 
     let packed = pack::pack(&data);
@@ -885,7 +880,8 @@ mod serde_tests {
         };
 
         let bytes = sproto::serde::to_bytes(&sproto, person_type, &original).unwrap();
-        let decoded: SimplePerson = sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
+        let decoded: SimplePerson =
+            sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -901,7 +897,8 @@ mod serde_tests {
         };
 
         let bytes = sproto::serde::to_bytes(&sproto, person_type, &original).unwrap();
-        let decoded: SimplePerson = sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
+        let decoded: SimplePerson =
+            sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -918,7 +915,8 @@ mod serde_tests {
         };
 
         let bytes = sproto::serde::to_bytes(&sproto, person_type, &original).unwrap();
-        let decoded: PersonWithOptional = sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
+        let decoded: PersonWithOptional =
+            sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -935,7 +933,8 @@ mod serde_tests {
         };
 
         let bytes = sproto::serde::to_bytes(&sproto, person_type, &original).unwrap();
-        let decoded: PersonWithOptional = sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
+        let decoded: PersonWithOptional =
+            sproto::serde::from_bytes(&sproto, person_type, &bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -1274,20 +1273,19 @@ fn test_addressbook_full_pipeline() {
 
     // Go abData bytes
     let expected_encoded: &[u8] = &[
-        1, 0, 0, 0, 122, 0, 0, 0, 68, 0, 0, 0, 4, 0, 0, 0, 34, 78, 1, 0, 0, 0, 5, 0, 0, 0, 65,
-        108, 105, 99, 101, 45, 0, 0, 0, 19, 0, 0, 0, 2, 0, 0, 0, 4, 0, 9, 0, 0, 0, 49, 50, 51,
-        52, 53, 54, 55, 56, 57, 18, 0, 0, 0, 2, 0, 0, 0, 6, 0, 8, 0, 0, 0, 56, 55, 54, 53, 52,
-        51, 50, 49, 46, 0, 0, 0, 4, 0, 0, 0, 66, 156, 1, 0, 0, 0, 3, 0, 0, 0, 66, 111, 98, 25,
-        0, 0, 0, 21, 0, 0, 0, 2, 0, 0, 0, 8, 0, 11, 0, 0, 0, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-        57, 48,
+        1, 0, 0, 0, 122, 0, 0, 0, 68, 0, 0, 0, 4, 0, 0, 0, 34, 78, 1, 0, 0, 0, 5, 0, 0, 0, 65, 108,
+        105, 99, 101, 45, 0, 0, 0, 19, 0, 0, 0, 2, 0, 0, 0, 4, 0, 9, 0, 0, 0, 49, 50, 51, 52, 53,
+        54, 55, 56, 57, 18, 0, 0, 0, 2, 0, 0, 0, 6, 0, 8, 0, 0, 0, 56, 55, 54, 53, 52, 51, 50, 49,
+        46, 0, 0, 0, 4, 0, 0, 0, 66, 156, 1, 0, 0, 0, 3, 0, 0, 0, 66, 111, 98, 25, 0, 0, 0, 21, 0,
+        0, 0, 2, 0, 0, 0, 8, 0, 11, 0, 0, 0, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48,
     ];
 
     // Go abDataPacked bytes
     let expected_packed: &[u8] = &[
-        17, 1, 122, 17, 68, 4, 71, 34, 78, 1, 5, 252, 65, 108, 105, 99, 101, 45, 136, 19, 2, 40,
-        4, 9, 254, 49, 50, 51, 52, 53, 54, 55, 71, 56, 57, 18, 2, 20, 6, 8, 255, 0, 56, 55, 54,
-        53, 52, 51, 50, 49, 17, 46, 4, 71, 66, 156, 1, 3, 60, 66, 111, 98, 25, 34, 21, 2, 138, 8,
-        11, 48, 255, 0, 49, 50, 51, 52, 53, 54, 55, 56, 3, 57, 48,
+        17, 1, 122, 17, 68, 4, 71, 34, 78, 1, 5, 252, 65, 108, 105, 99, 101, 45, 136, 19, 2, 40, 4,
+        9, 254, 49, 50, 51, 52, 53, 54, 55, 71, 56, 57, 18, 2, 20, 6, 8, 255, 0, 56, 55, 54, 53,
+        52, 51, 50, 49, 17, 46, 4, 71, 66, 156, 1, 3, 60, 66, 111, 98, 25, 34, 21, 2, 138, 8, 11,
+        48, 255, 0, 49, 50, 51, 52, 53, 54, 55, 56, 3, 57, 48,
     ];
 
     let st = schema.get_type("AddressBook").unwrap();

@@ -1,6 +1,6 @@
-pub mod lexer;
 pub mod ast;
 pub mod grammar;
+pub mod lexer;
 pub mod schema_builder;
 
 use crate::error::ParseError;

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use super::ast::*;
 use crate::error::ParseError;
 use crate::types::*;
-use super::ast::*;
 
 /// Built-in type name to ID mapping.
 fn _builtin_type_id(name: &str) -> Option<u8> {
@@ -101,12 +101,8 @@ pub fn build_schema(items: Vec<AstItem>) -> Result<Sproto, ParseError> {
         let mut fields: Vec<Field> = Vec::new();
 
         for rf in raw_fields {
-            let field_type = resolve_field_type(
-                type_name,
-                &rf.type_name,
-                &types_by_name,
-                &raw_types,
-            )?;
+            let field_type =
+                resolve_field_type(type_name, &rf.type_name, &types_by_name, &raw_types)?;
 
             let mut decimal_precision: u32 = 0;
             let mut key_tag: i32 = -1;
@@ -203,12 +199,13 @@ pub fn build_schema(items: Vec<AstItem>) -> Result<Sproto, ParseError> {
             .request
             .as_ref()
             .map(|n| {
-                types_by_name.get(n).copied().ok_or_else(|| {
-                    ParseError::UndefinedType {
+                types_by_name
+                    .get(n)
+                    .copied()
+                    .ok_or_else(|| ParseError::UndefinedType {
                         type_name: n.clone(),
                         referenced_by: format!("protocol {}", rp.name),
-                    }
-                })
+                    })
             })
             .transpose()?;
 
@@ -216,12 +213,13 @@ pub fn build_schema(items: Vec<AstItem>) -> Result<Sproto, ParseError> {
             .response
             .as_ref()
             .map(|n| {
-                types_by_name.get(n).copied().ok_or_else(|| {
-                    ParseError::UndefinedType {
+                types_by_name
+                    .get(n)
+                    .copied()
+                    .ok_or_else(|| ParseError::UndefinedType {
                         type_name: n.clone(),
                         referenced_by: format!("protocol {}", rp.name),
-                    }
-                })
+                    })
             })
             .transpose()?;
 
@@ -278,9 +276,7 @@ fn collect_type(
     };
 
     if out.contains_key(&full_name) {
-        return Err(ParseError::DuplicateType {
-            name: full_name,
-        });
+        return Err(ParseError::DuplicateType { name: full_name });
     }
 
     let mut fields = Vec::new();
@@ -404,10 +400,9 @@ mod tests {
 
     #[test]
     fn test_build_simple_schema() {
-        let items = parse_schema(
-            ".Person { name 0 : string  age 1 : integer  marital 2 : boolean }",
-        )
-        .unwrap();
+        let items =
+            parse_schema(".Person { name 0 : string  age 1 : integer  marital 2 : boolean }")
+                .unwrap();
         let sproto = build_schema(items).unwrap();
         let t = sproto.get_type("Person").unwrap();
         assert_eq!(t.fields.len(), 3);

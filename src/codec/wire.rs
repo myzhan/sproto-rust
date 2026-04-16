@@ -15,7 +15,9 @@ pub fn read_u32_le(buf: &[u8]) -> u32 {
 /// Read a 64-bit unsigned integer from a little-endian byte slice.
 #[inline]
 pub fn read_u64_le(buf: &[u8]) -> u64 {
-    u64::from_le_bytes([buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]])
+    u64::from_le_bytes([
+        buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+    ])
 }
 
 /// Write a 16-bit unsigned integer in little-endian.

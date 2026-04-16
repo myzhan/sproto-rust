@@ -1,12 +1,12 @@
 //! Lua userdata implementations for Sproto types.
 
 use mlua::prelude::*;
-use sproto::{parser, binary_schema, rpc, Sproto};
-use std::sync::Arc;
+use sproto::{binary_schema, parser, rpc, Sproto};
 use std::cell::RefCell;
+use std::sync::Arc;
 
-use crate::lua_codec;
 use crate::error::{decode_error_to_lua, parse_error_to_lua, rpc_error_to_lua};
+use crate::lua_codec;
 
 /// Wrapper for Sproto schema object.
 pub struct SprotoUserData {
@@ -16,26 +16,30 @@ pub struct SprotoUserData {
 impl LuaUserData for SprotoUserData {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         // encode(type_name, table) -> string
-        methods.add_method("encode", |lua, this, (type_name, value): (String, LuaTable)| {
-            let sproto_type = this
-                .inner
-                .get_type(&type_name)
-                .ok_or_else(|| LuaError::RuntimeError(format!("unknown type: {}", type_name)))?;
+        methods.add_method(
+            "encode",
+            |lua, this, (type_name, value): (String, LuaTable)| {
+                let sproto_type = this.inner.get_type(&type_name).ok_or_else(|| {
+                    LuaError::RuntimeError(format!("unknown type: {}", type_name))
+                })?;
 
-            let bytes = lua_codec::lua_encode(lua, &this.inner, sproto_type, &value)?;
-            lua.create_string(&bytes)
-        });
+                let bytes = lua_codec::lua_encode(lua, &this.inner, sproto_type, &value)?;
+                lua.create_string(&bytes)
+            },
+        );
 
         // decode(type_name, data) -> table
-        methods.add_method("decode", |lua, this, (type_name, data): (String, LuaString)| {
-            let sproto_type = this
-                .inner
-                .get_type(&type_name)
-                .ok_or_else(|| LuaError::RuntimeError(format!("unknown type: {}", type_name)))?;
+        methods.add_method(
+            "decode",
+            |lua, this, (type_name, data): (String, LuaString)| {
+                let sproto_type = this.inner.get_type(&type_name).ok_or_else(|| {
+                    LuaError::RuntimeError(format!("unknown type: {}", type_name))
+                })?;
 
-            let table = lua_codec::lua_decode(lua, &this.inner, sproto_type, &data.as_bytes())?;
-            Ok(LuaValue::Table(table))
-        });
+                let table = lua_codec::lua_decode(lua, &this.inner, sproto_type, &data.as_bytes())?;
+                Ok(LuaValue::Table(table))
+            },
+        );
 
         // get_type(name) -> table | nil
         methods.add_method("get_type", |lua, this, name: String| {
@@ -150,12 +154,15 @@ impl LuaUserData for HostUserData {
         });
 
         // attach(remote_sproto) -> Sender
-        methods.add_method("attach", |_lua, this, remote: LuaUserDataRef<SprotoUserData>| {
-            let sender = this.inner.borrow().attach((*remote.inner).clone());
-            Ok(SenderUserData {
-                inner: RefCell::new(sender),
-            })
-        });
+        methods.add_method(
+            "attach",
+            |_lua, this, remote: LuaUserDataRef<SprotoUserData>| {
+                let sender = this.inner.borrow().attach((*remote.inner).clone());
+                Ok(SenderUserData {
+                    inner: RefCell::new(sender),
+                })
+            },
+        );
 
         // register_session(session)
         methods.add_method("register_session", |_lua, this, session: u64| {
@@ -198,14 +205,17 @@ impl LuaUserData for ResponderUserData {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         // respond(body, ud?) -> string
         // body is a pre-encoded binary string
-        methods.add_method("respond", |lua, this, (body, ud): (LuaString, Option<i64>)| {
-            let data = this
-                .inner
-                .respond(&body.as_bytes(), ud)
-                .map_err(rpc_error_to_lua)?;
+        methods.add_method(
+            "respond",
+            |lua, this, (body, ud): (LuaString, Option<i64>)| {
+                let data = this
+                    .inner
+                    .respond(&body.as_bytes(), ud)
+                    .map_err(rpc_error_to_lua)?;
 
-            lua.create_string(&data)
-        });
+                lua.create_string(&data)
+            },
+        );
     }
 }
 
