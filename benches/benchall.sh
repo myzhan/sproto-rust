@@ -81,6 +81,12 @@ rust_serde_decode=$(run_rust decode serde)
 rust_serde_encode_pack=$(run_rust encode_pack serde)
 rust_serde_unpack_decode=$(run_rust unpack_decode serde)
 
+# Direct API (AddressBook)
+rust_direct_encode=$(run_rust encode direct)
+rust_direct_decode=$(run_rust decode direct)
+rust_direct_encode_pack=$(run_rust encode_pack direct)
+rust_direct_unpack_decode=$(run_rust unpack_decode direct)
+
 # Derive API (AddressBook)
 rust_derive_encode=$(run_rust encode derive)
 rust_derive_decode=$(run_rust decode derive)
@@ -133,6 +139,16 @@ print_row "encode+pack"   "$rust_serde_encode_pack"
 print_row "unpack+decode" "$rust_serde_unpack_decode"
 
 echo ""
+echo "Rust Direct API (AddressBook — nested structs):"
+printf "%-14s | %s\n" "Scenario" "Time"
+printf "%-14s-+-%s\n" "--------------" "------------"
+
+print_row "encode"        "$rust_direct_encode"
+print_row "decode"        "$rust_direct_decode"
+print_row "encode+pack"   "$rust_direct_encode_pack"
+print_row "unpack+decode" "$rust_direct_unpack_decode"
+
+echo ""
 echo "Rust Derive API (AddressBook — nested structs):"
 printf "%-14s | %s\n" "Scenario" "Time"
 printf "%-14s-+-%s\n" "--------------" "------------"
@@ -143,38 +159,63 @@ print_row "encode+pack"   "$rust_derive_encode_pack"
 print_row "unpack+decode" "$rust_derive_unpack_decode"
 
 echo ""
-echo "Serde vs Derive comparison (AddressBook, --api compare):"
-echo "  (Use './benchmark --api compare --mode <mode>' for side-by-side comparison)"
+echo "Rust API comparison (Serde vs Direct vs Derive):"
+printf "%-14s | %-12s | %-12s | %-12s\n" "Scenario" "Serde" "Direct" "Derive"
+printf "%-14s-+-%-12s-+-%-12s-+-%s\n" "--------------" "------------" "------------" "------------"
+printf "%-14s | %-12s | %-12s | %-12s\n" \
+    "encode"        "$(fmt_time "$rust_serde_encode")" "$(fmt_time "$rust_direct_encode")" "$(fmt_time "$rust_derive_encode")"
+printf "%-14s | %-12s | %-12s | %-12s\n" \
+    "decode"        "$(fmt_time "$rust_serde_decode")" "$(fmt_time "$rust_direct_decode")" "$(fmt_time "$rust_derive_decode")"
+printf "%-14s | %-12s | %-12s | %-12s\n" \
+    "encode+pack"   "$(fmt_time "$rust_serde_encode_pack")" "$(fmt_time "$rust_direct_encode_pack")" "$(fmt_time "$rust_derive_encode_pack")"
+printf "%-14s | %-12s | %-12s | %-12s\n" \
+    "unpack+decode" "$(fmt_time "$rust_serde_unpack_decode")" "$(fmt_time "$rust_direct_unpack_decode")" "$(fmt_time "$rust_derive_unpack_decode")"
 
 if [ -n "$GO_BIN" ]; then
     echo ""
     echo "Cross-language comparison (Go encode=encode+pack, Go decode=unpack+decode):"
-    printf "%-14s | %-12s | %-12s | %-12s | %-12s | %-16s | %s\n" \
-        "Scenario" "Go(reflect)" "Go(codec)" "Rust(serde)" "Rust(derive)" "go_ref/rs_serde" "go_ref/rs_derive"
-    printf "%-14s-+-%-12s-+-%-12s-+-%-12s-+-%-12s-+-%-16s-+-%s\n" \
-        "--------------" "------------" "------------" "------------" "------------" "----------------" "----------------"
-
-    serde_speedup1=$(ratio "$go_encode_reflect" "$rust_serde_encode_pack")
-    derive_speedup1=$(ratio "$go_encode_reflect" "$rust_derive_encode_pack")
-    printf "%-14s | %-12s | %-12s | %-12s | %-12s | %-16s | %s\n" \
+    printf "%-14s | %-12s | %-12s | %-12s | %-12s | %-12s\n" \
+        "Scenario" "Go(reflect)" "Go(codec)" "Rust(serde)" "Rust(direct)" "Rust(derive)"
+    printf "%-14s-+-%-12s-+-%-12s-+-%-12s-+-%-12s-+-%s\n" \
+        "--------------" "------------" "------------" "------------" "------------" "------------"
+    printf "%-14s | %-12s | %-12s | %-12s | %-12s | %-12s\n" \
         "encode+pack" \
         "$(fmt_time "$go_encode_reflect")" \
         "$(fmt_time "$go_encode_codec")" \
         "$(fmt_time "$rust_serde_encode_pack")" \
-        "$(fmt_time "$rust_derive_encode_pack")" \
-        "$serde_speedup1" \
-        "$derive_speedup1"
-
-    serde_speedup2=$(ratio "$go_decode_reflect" "$rust_serde_unpack_decode")
-    derive_speedup2=$(ratio "$go_decode_reflect" "$rust_derive_unpack_decode")
-    printf "%-14s | %-12s | %-12s | %-12s | %-12s | %-16s | %s\n" \
+        "$(fmt_time "$rust_direct_encode_pack")" \
+        "$(fmt_time "$rust_derive_encode_pack")"
+    printf "%-14s | %-12s | %-12s | %-12s | %-12s | %-12s\n" \
         "unpack+decode" \
         "$(fmt_time "$go_decode_reflect")" \
         "$(fmt_time "$go_decode_codec")" \
         "$(fmt_time "$rust_serde_unpack_decode")" \
-        "$(fmt_time "$rust_derive_unpack_decode")" \
-        "$serde_speedup2" \
-        "$derive_speedup2"
+        "$(fmt_time "$rust_direct_unpack_decode")" \
+        "$(fmt_time "$rust_derive_unpack_decode")"
+
+    echo ""
+    echo "Speedup ratios (Go / Rust, higher = Rust faster):"
+    printf "%-14s | %-16s | %-16s | %-16s | %-16s | %-16s | %s\n" \
+        "Scenario" "go_ref/rs_serde" "go_ref/rs_direct" "go_ref/rs_derive" "go_cod/rs_serde" "go_cod/rs_direct" "go_cod/rs_derive"
+    printf "%-14s-+-%-16s-+-%-16s-+-%-16s-+-%-16s-+-%-16s-+-%s\n" \
+        "--------------" "----------------" "----------------" "----------------" "----------------" "----------------" "----------------"
+
+    printf "%-14s | %-16s | %-16s | %-16s | %-16s | %-16s | %s\n" \
+        "encode+pack" \
+        "$(ratio "$go_encode_reflect" "$rust_serde_encode_pack")" \
+        "$(ratio "$go_encode_reflect" "$rust_direct_encode_pack")" \
+        "$(ratio "$go_encode_reflect" "$rust_derive_encode_pack")" \
+        "$(ratio "$go_encode_codec" "$rust_serde_encode_pack")" \
+        "$(ratio "$go_encode_codec" "$rust_direct_encode_pack")" \
+        "$(ratio "$go_encode_codec" "$rust_derive_encode_pack")"
+    printf "%-14s | %-16s | %-16s | %-16s | %-16s | %-16s | %s\n" \
+        "unpack+decode" \
+        "$(ratio "$go_decode_reflect" "$rust_serde_unpack_decode")" \
+        "$(ratio "$go_decode_reflect" "$rust_direct_unpack_decode")" \
+        "$(ratio "$go_decode_reflect" "$rust_derive_unpack_decode")" \
+        "$(ratio "$go_decode_codec" "$rust_serde_unpack_decode")" \
+        "$(ratio "$go_decode_codec" "$rust_direct_unpack_decode")" \
+        "$(ratio "$go_decode_codec" "$rust_derive_unpack_decode")"
 fi
 
 echo ""

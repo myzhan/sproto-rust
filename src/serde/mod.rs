@@ -39,11 +39,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{Sproto, SprotoType};
 
-/// Serialize a value to sproto binary format using a schema.
+/// Serialize a value to sproto binary format.
 ///
-/// The `sproto` parameter provides the schema metadata, and `sproto_type`
-/// specifies which type definition to use for encoding. Field names in
-/// the struct must match field names in the schema.
+/// The caller provides the `SprotoType` explicitly, preserving full
+/// runtime flexibility (no recompilation needed when schema changes).
 pub fn to_bytes<T: Serialize>(
     sproto: &Sproto,
     sproto_type: &SprotoType,
@@ -54,11 +53,10 @@ pub fn to_bytes<T: Serialize>(
     Ok(buf)
 }
 
-/// Deserialize a value from sproto binary format using a schema.
+/// Deserialize a value from sproto binary format.
 ///
-/// The `sproto` parameter provides the schema metadata, and `sproto_type`
-/// specifies which type definition to use for decoding. Field names in
-/// the target struct must match field names in the schema.
+/// The caller provides the `SprotoType` explicitly, preserving full
+/// runtime flexibility (no recompilation needed when schema changes).
 pub fn from_bytes<T: for<'de> Deserialize<'de>>(
     sproto: &Sproto,
     sproto_type: &SprotoType,

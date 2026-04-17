@@ -1303,3 +1303,244 @@ fn test_addressbook_full_pipeline() {
     assert_eq!(persons[0].name.as_deref(), Some("Alice"));
     assert_eq!(persons[1].name.as_deref(), Some("Bob"));
 }
+
+// ── Direct API roundtrip tests (SchemaEncode / SchemaDecode via derive) ──
+
+mod direct_api_tests {
+    use sproto::parser;
+    use sproto::{SprotoDecode, SprotoEncode};
+
+    fn test_schema() -> sproto::types::Sproto {
+        parser::parse(
+            r#"
+            .Person {
+                name 0 : string
+                age 1 : integer
+                active 2 : boolean
+                score 3 : double
+            }
+            .Team {
+                name 0 : string
+                members 1 : *Person
+            }
+            .Data {
+                numbers 0 : *integer
+                flags 1 : *boolean
+                values 2 : *double
+                tags 3 : *string
+            }
+            .Nested {
+                person 0 : Person
+                count 1 : integer
+            }
+        "#,
+        )
+        .unwrap()
+    }
+
+    #[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+    struct Person {
+        #[sproto(tag = 0)]
+        name: String,
+        #[sproto(tag = 1)]
+        age: i64,
+        #[sproto(tag = 2)]
+        active: bool,
+        #[sproto(tag = 3)]
+        score: f64,
+    }
+
+    #[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+    struct Team {
+        #[sproto(tag = 0)]
+        name: String,
+        #[sproto(tag = 1)]
+        members: Vec<Person>,
+    }
+
+    #[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+    struct Data {
+        #[sproto(tag = 0)]
+        numbers: Vec<i64>,
+        #[sproto(tag = 1)]
+        flags: Vec<bool>,
+        #[sproto(tag = 2)]
+        values: Vec<f64>,
+        #[sproto(tag = 3)]
+        tags: Vec<String>,
+    }
+
+    #[derive(Debug, PartialEq, SprotoEncode, SprotoDecode)]
+    struct Nested {
+        #[sproto(tag = 0)]
+        person: Person,
+        #[sproto(tag = 1)]
+        count: i64,
+    }
+
+    #[test]
+    fn test_direct_api_primitives() {
+        let schema = test_schema();
+        let st = schema.get_type("Person").unwrap();
+        let person = Person {
+            name: "Alice".into(),
+            age: 30,
+            active: true,
+            score: 98.5,
+        };
+        let bytes = sproto::to_bytes(&schema, st, &person).unwrap();
+        let decoded: Person = sproto::from_bytes(&schema, st, &bytes).unwrap();
+        assert_eq!(decoded, person);
+    }
+
+    #[test]
+    fn test_direct_api_negative_integer() {
+        let schema = test_schema();
+        let st = schema.get_type("Person").unwrap();
+        let person = Person {
+            name: "Bob".into(),
+            age: -100,
+            active: false,
+            score: -1.5,
+        };
+        let bytes = sproto::to_bytes(&schema, st, &person).unwrap();
+        let decoded: Person = sproto::from_bytes(&schema, st, &bytes).unwrap();
+        assert_eq!(decoded, person);
+    }
+
+    #[test]
+    fn test_direct_api_large_integer() {
+        let schema = test_schema();
+        let st = schema.get_type("Person").unwrap();
+        let person = Person {
+            name: "Max".into(),
+            age: i64::MAX,
+            active: true,
+            score: 0.0,
+        };
+        let bytes = sproto::to_bytes(&schema, st, &person).unwrap();
+        let decoded: Person = sproto::from_bytes(&schema, st, &bytes).unwrap();
+        assert_eq!(decoded, person);
+    }
+
+    #[test]
+    fn test_direct_api_arrays() {
+        let schema = test_schema();
+        let st = schema.get_type("Data").unwrap();
+        let data = Data {
+            numbers: vec![1, 2, 3, -100, i64::MAX],
+            flags: vec![true, false, true, true],
+            values: vec![1.1, 2.2, 3.3],
+            tags: vec!["a".into(), "bb".into(), "ccc".into()],
+        };
+        let bytes = sproto::to_bytes(&schema, st, &data).unwrap();
+        let decoded: Data = sproto::from_bytes(&schema, st, &bytes).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_direct_api_empty_arrays() {
+        let schema = test_schema();
+        let st = schema.get_type("Data").unwrap();
+        let data = Data {
+            numbers: vec![],
+            flags: vec![],
+            values: vec![],
+            tags: vec![],
+        };
+        let bytes = sproto::to_bytes(&schema, st, &data).unwrap();
+        let decoded: Data = sproto::from_bytes(&schema, st, &bytes).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_direct_api_nested_struct() {
+        let schema = test_schema();
+        let st = schema.get_type("Nested").unwrap();
+        let nested = Nested {
+            person: Person {
+                name: "Charlie".into(),
+                age: 25,
+                active: true,
+                score: 88.0,
+            },
+            count: 42,
+        };
+        let bytes = sproto::to_bytes(&schema, st, &nested).unwrap();
+        let decoded: Nested = sproto::from_bytes(&schema, st, &bytes).unwrap();
+        assert_eq!(decoded, nested);
+    }
+
+    #[test]
+    fn test_direct_api_struct_array() {
+        let schema = test_schema();
+        let st = schema.get_type("Team").unwrap();
+        let team = Team {
+            name: "Engineers".into(),
+            members: vec![
+                Person {
+                    name: "Alice".into(),
+                    age: 30,
+                    active: true,
+                    score: 95.0,
+                },
+                Person {
+                    name: "Bob".into(),
+                    age: 25,
+                    active: false,
+                    score: 88.5,
+                },
+            ],
+        };
+        let bytes = sproto::to_bytes(&schema, st, &team).unwrap();
+        let decoded: Team = sproto::from_bytes(&schema, st, &bytes).unwrap();
+        assert_eq!(decoded, team);
+    }
+
+    #[test]
+    fn test_direct_api_unicode() {
+        let schema = test_schema();
+        let st = schema.get_type("Person").unwrap();
+        let person = Person {
+            name: "张三李四".into(),
+            age: 28,
+            active: true,
+            score: 100.0,
+        };
+        let bytes = sproto::to_bytes(&schema, st, &person).unwrap();
+        let decoded: Person = sproto::from_bytes(&schema, st, &bytes).unwrap();
+        assert_eq!(decoded, person);
+    }
+
+    #[test]
+    fn test_direct_api_wire_compat_with_derive() {
+        // Verify that Direct API (schema-driven) produces the same wire bytes
+        // as the Derive API (compile-time) for the same data.
+        let schema = test_schema();
+        let st = schema.get_type("Person").unwrap();
+        let person = Person {
+            name: "Alice".into(),
+            age: 30,
+            active: true,
+            score: 98.5,
+        };
+
+        // Derive API encode
+        let derive_bytes = sproto::SprotoEncode::sproto_encode(&person).unwrap();
+        // Direct API encode
+        let direct_bytes = sproto::to_bytes(&schema, st, &person).unwrap();
+
+        assert_eq!(
+            derive_bytes, direct_bytes,
+            "Derive and Direct API should produce identical wire bytes"
+        );
+
+        // Cross-decode: derive bytes decoded by Direct API
+        let cross1: Person = sproto::from_bytes(&schema, st, &derive_bytes).unwrap();
+        assert_eq!(cross1, person);
+
+        // Cross-decode: direct bytes decoded by Derive API
+        let cross2 = Person::sproto_decode(&direct_bytes).unwrap();
+        assert_eq!(cross2, person);
+    }
+}

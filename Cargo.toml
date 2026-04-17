@@ -7,9 +7,9 @@ autobenches = false
 autoexamples = false
 
 [features]
-default = ["derive"]
+default = ["derive", "serde"]
 serde = ["dep:serde"]
-derive = ["dep:sproto-derive", "serde"]
+derive = ["dep:sproto-derive"]
 
 [dependencies]
 thiserror = "2"

@@ -2,6 +2,7 @@
 
 use serde::de::{self, DeserializeSeed, Visitor};
 
+use crate::codec::decoder::{DecodedField, StructDecoder};
 use crate::codec::wire::*;
 use crate::types::{Field, FieldType, Sproto, SprotoType};
 
@@ -13,94 +14,14 @@ pub fn direct_decode<'de, T: de::Deserialize<'de>>(
     sproto_type: &'de SprotoType,
     data: &'de [u8],
 ) -> Result<T, SerdeError> {
-    let deser = DirectDeserializer::new(sproto, sproto_type, data)?;
-    T::deserialize(deser)
+    let decoder = StructDecoder::new(sproto, sproto_type, data)?;
+    T::deserialize(DirectDeserializer { decoder })
 }
 
-// ── Parsed field from wire header ───────────────────────────────────────
-
-struct ParsedField<'de> {
-    field: &'de Field,
-    /// If >= 0, value is inline (decoded_value). If < 0, data is in data slice.
-    inline_value: i32,
-    /// Slice of field data (excluding length prefix). Empty if inline.
-    data: &'de [u8],
-}
-
-// ── Top-level deserializer ──────────────────────────────────────────────
+// ── Top-level deserializer (wraps StructDecoder) ────────────────────────
 
 struct DirectDeserializer<'de> {
-    sproto: &'de Sproto,
-    parsed: Vec<ParsedField<'de>>,
-}
-
-impl<'de> DirectDeserializer<'de> {
-    fn new(
-        sproto: &'de Sproto,
-        sproto_type: &'de SprotoType,
-        data: &'de [u8],
-    ) -> Result<Self, SerdeError> {
-        let parsed = parse_wire_fields(sproto_type, data)?;
-        Ok(DirectDeserializer { sproto, parsed })
-    }
-}
-
-/// Parse wire header into a list of ParsedField entries.
-fn parse_wire_fields<'de>(
-    sproto_type: &'de SprotoType,
-    data: &'de [u8],
-) -> Result<Vec<ParsedField<'de>>, SerdeError> {
-    let size = data.len();
-    if size < SIZEOF_HEADER {
-        return Err(SerdeError::Custom(format!(
-            "truncated header: need {}, have {}",
-            SIZEOF_HEADER, size
-        )));
-    }
-    let fn_count = read_u16_le(&data[0..]) as usize;
-    let field_part_end = SIZEOF_HEADER + fn_count * SIZEOF_FIELD;
-    if size < field_part_end {
-        return Err(SerdeError::Custom(format!(
-            "truncated fields: need {}, have {}",
-            field_part_end, size
-        )));
-    }
-    let field_part = &data[SIZEOF_HEADER..field_part_end];
-    let mut data_offset = field_part_end;
-    let mut tag: i32 = -1;
-    let mut result = Vec::with_capacity(fn_count);
-
-    for i in 0..fn_count {
-        let value = read_u16_le(&field_part[i * SIZEOF_FIELD..]) as i32;
-        tag += 1;
-        if value & 1 != 0 {
-            tag += value / 2;
-            continue;
-        }
-        let decoded_value = value / 2 - 1;
-        let mut field_data: &[u8] = &[];
-        if decoded_value < 0 {
-            if data_offset + SIZEOF_LENGTH > size {
-                return Err(SerdeError::Custom("truncated data length".into()));
-            }
-            let dsz = read_u32_le(&data[data_offset..]) as usize;
-            if data_offset + SIZEOF_LENGTH + dsz > size {
-                return Err(SerdeError::Custom("truncated data".into()));
-            }
-            field_data = &data[data_offset + SIZEOF_LENGTH..data_offset + SIZEOF_LENGTH + dsz];
-            data_offset += SIZEOF_LENGTH + dsz;
-        }
-        let field = match sproto_type.find_field_by_tag(tag as u16) {
-            Some(f) => f,
-            None => continue,
-        };
-        result.push(ParsedField {
-            field,
-            inline_value: decoded_value,
-            data: field_data,
-        });
-    }
-    Ok(result)
+    decoder: StructDecoder<'de>,
 }
 
 impl<'de> de::Deserializer<'de> for DirectDeserializer<'de> {
@@ -113,9 +34,7 @@ impl<'de> de::Deserializer<'de> for DirectDeserializer<'de> {
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
         visitor.visit_map(WireMapAccess {
-            sproto: self.sproto,
-            parsed: self.parsed,
-            index: 0,
+            decoder: self.decoder,
             current: None,
         })
     }
@@ -126,9 +45,7 @@ impl<'de> de::Deserializer<'de> for DirectDeserializer<'de> {
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         visitor.visit_map(WireMapAccess {
-            sproto: self.sproto,
-            parsed: self.parsed,
-            index: 0,
+            decoder: self.decoder,
             current: None,
         })
     }
@@ -140,13 +57,11 @@ impl<'de> de::Deserializer<'de> for DirectDeserializer<'de> {
     }
 }
 
-// ── WireMapAccess ───────────────────────────────────────────────────────
+// ── WireMapAccess (wraps StructDecoder + DecodedField) ──────────────────
 
 struct WireMapAccess<'de> {
-    sproto: &'de Sproto,
-    parsed: Vec<ParsedField<'de>>,
-    index: usize,
-    current: Option<usize>,
+    decoder: StructDecoder<'de>,
+    current: Option<DecodedField<'de>>,
 }
 
 impl<'de> de::MapAccess<'de> for WireMapAccess<'de> {
@@ -156,35 +71,29 @@ impl<'de> de::MapAccess<'de> for WireMapAccess<'de> {
         &mut self,
         seed: K,
     ) -> Result<Option<K::Value>, Self::Error> {
-        if self.index >= self.parsed.len() {
-            return Ok(None);
+        match self.decoder.next_field()? {
+            None => Ok(None),
+            Some(f) => {
+                let field_ref = f.field();
+                self.current = Some(f);
+                seed.deserialize(StrDeserializer(&field_ref.name)).map(Some)
+            }
         }
-        self.current = Some(self.index);
-        let name = &self.parsed[self.index].field.name;
-        self.index += 1;
-        seed.deserialize(StrDeserializer(name)).map(Some)
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(
         &mut self,
         seed: V,
     ) -> Result<V::Value, Self::Error> {
-        let idx = self
+        let decoded = self
             .current
             .take()
             .ok_or_else(|| SerdeError::Custom("value before key".into()))?;
-        let pf = &self.parsed[idx];
-        let deser = FieldValueDeserializer {
-            sproto: self.sproto,
-            field: pf.field,
-            inline_value: pf.inline_value,
-            data: pf.data,
-        };
-        seed.deserialize(deser)
+        seed.deserialize(FieldValueDeserializer::from_decoded(decoded))
     }
 
     fn size_hint(&self) -> Option<usize> {
-        Some(self.parsed.len() - self.index)
+        Some(self.decoder.remaining_hint())
     }
 }
 
@@ -198,6 +107,15 @@ struct FieldValueDeserializer<'de> {
 }
 
 impl<'de> FieldValueDeserializer<'de> {
+    fn from_decoded(f: DecodedField<'de>) -> Self {
+        FieldValueDeserializer {
+            sproto: f.sproto(),
+            field: f.field(),
+            inline_value: f.inline_value(),
+            data: f.data(),
+        }
+    }
+
     fn decode_integer(&self) -> Result<i64, SerdeError> {
         if self.inline_value >= 0 {
             return Ok(self.inline_value as i64);
@@ -258,8 +176,8 @@ impl<'de> de::Deserializer<'de> for FieldValueDeserializer<'de> {
             FieldType::Binary => visitor.visit_borrowed_bytes(self.data),
             FieldType::Struct(idx) => {
                 let sub_type = &self.sproto.types_list[*idx];
-                let sub = DirectDeserializer::new(self.sproto, sub_type, self.data)?;
-                sub.deserialize_any(visitor)
+                let decoder = StructDecoder::new(self.sproto, sub_type, self.data)?;
+                DirectDeserializer { decoder }.deserialize_any(visitor)
             }
         }
     }
@@ -402,8 +320,8 @@ impl<'de> de::Deserializer<'de> for FieldValueDeserializer<'de> {
                 })
             }
         };
-        let sub = DirectDeserializer::new(self.sproto, sub_type, self.data)?;
-        sub.deserialize_struct(_name, _fields, visitor)
+        let decoder = StructDecoder::new(self.sproto, sub_type, self.data)?;
+        DirectDeserializer { decoder }.deserialize_struct(_name, _fields, visitor)
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -557,8 +475,8 @@ impl<'de> de::SeqAccess<'de> for ObjectArrayAccess<'de> {
             FieldType::Binary => seed.deserialize(BytesDeser(elem)).map(Some),
             FieldType::Struct(idx) => {
                 let st = &self.sproto.types_list[*idx];
-                let sub = DirectDeserializer::new(self.sproto, st, elem)?;
-                seed.deserialize(sub).map(Some)
+                let decoder = StructDecoder::new(self.sproto, st, elem)?;
+                seed.deserialize(DirectDeserializer { decoder }).map(Some)
             }
             _ => Err(SerdeError::Custom("unexpected array element type".into())),
         }

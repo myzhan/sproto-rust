@@ -438,6 +438,212 @@ fn generate_scalar_decode(
     }
 }
 
+// ── SchemaDecode generation ─────────────────────────────────────────────
+
+/// Generate the SchemaDecode implementation for a struct.
+///
+/// This is generated alongside SprotoDecode by `#[derive(SprotoDecode)]`.
+/// SchemaDecode uses the Core Engine's StructDecoder (lazy wire iteration) and
+/// enables the 3-parameter `sproto::from_bytes::<T>(&schema, &sproto_type, &data)` Direct API.
+pub fn generate_schema_decode(input: &DeriveInput) -> Result<TokenStream> {
+    let name = &input.ident;
+
+    let fields = match &input.data {
+        syn::Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => &fields.named,
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "SchemaDecode only supports structs with named fields",
+                ))
+            }
+        },
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "SchemaDecode only supports structs",
+            ))
+        }
+    };
+
+    let mut field_data: Vec<(FieldInfo, FieldTypeInfo, &Type)> = Vec::new();
+    for field in fields {
+        let ident = field.ident.clone().unwrap();
+        let attrs = FieldAttrs::from_attrs(&field.attrs)?;
+
+        if attrs.skip {
+            field_data.push((
+                FieldInfo {
+                    ident,
+                    tag: 0,
+                    is_optional: false,
+                    is_vec: false,
+                    skip: true,
+                    use_default: true,
+                    span: field.ident.as_ref().unwrap().span(),
+                },
+                FieldTypeInfo::Integer,
+                &field.ty,
+            ));
+            continue;
+        }
+
+        let tag = attrs.tag.ok_or_else(|| {
+            syn::Error::new_spanned(&field.ident, "field must have #[sproto(tag = N)] attribute")
+        })?;
+
+        let (is_optional, is_vec, inner_type) = analyze_type(&field.ty);
+        let field_type_info = rust_type_to_field_type_info(inner_type.unwrap_or(&field.ty));
+
+        field_data.push((
+            FieldInfo {
+                ident,
+                tag,
+                is_optional,
+                is_vec,
+                skip: false,
+                use_default: attrs.use_default,
+                span: field.ident.as_ref().unwrap().span(),
+            },
+            field_type_info,
+            &field.ty,
+        ));
+    }
+
+    // Sort active fields by tag
+    let mut sorted_fields: Vec<_> = field_data.iter().filter(|(f, _, _)| !f.skip).collect();
+    sorted_fields.sort_by_key(|(f, _, _)| f.tag);
+
+    // Generate field variable declarations
+    let field_declarations: Vec<_> = field_data
+        .iter()
+        .map(|(field, _, ty)| {
+            let ident = &field.ident;
+            if field.skip {
+                quote! { let mut #ident: #ty = Default::default(); }
+            } else if field.is_optional {
+                quote! { let mut #ident: #ty = None; }
+            } else if field.use_default {
+                quote! { let mut #ident: #ty = Default::default(); }
+            } else {
+                quote! { let mut #ident: Option<#ty> = None; }
+            }
+        })
+        .collect();
+
+    // Generate match arms
+    let match_arms: Vec<_> = sorted_fields
+        .iter()
+        .map(|(field, field_type, ty)| {
+            let tag = field.tag;
+            let ident = &field.ident;
+            let (_, _, inner_type) = analyze_type(ty);
+            let inner_ty = inner_type.unwrap_or(ty);
+
+            let decode_expr = if field.is_vec {
+                generate_schema_array_decode_expr(*field_type, inner_ty)
+            } else {
+                generate_schema_scalar_decode_expr(*field_type, inner_ty)
+            };
+
+            let assign = if field.is_optional || !field.use_default {
+                // Optional fields: set to Some(value)
+                // Required fields (stored as Option): set to Some(value)
+                quote! { #ident = Some(__decoded_val); }
+            } else {
+                // use_default fields: direct assign
+                quote! { #ident = __decoded_val; }
+            };
+
+            quote! {
+                #tag => {
+                    let __decoded_val = #decode_expr;
+                    #assign
+                }
+            }
+        })
+        .collect();
+
+    // Generate final field extractions
+    let field_extractions: Vec<_> = field_data
+        .iter()
+        .map(|(field, _, _)| {
+            let ident = &field.ident;
+            let name_str = ident.to_string();
+            if field.skip || field.is_optional || field.use_default {
+                quote! { #ident }
+            } else {
+                quote! {
+                    #ident: #ident.ok_or_else(|| ::sproto::error::DecodeError::InvalidData(
+                        format!("missing required field '{}'", #name_str)
+                    ))?
+                }
+            }
+        })
+        .collect();
+
+    Ok(quote! {
+        impl ::sproto::SchemaDecode for #name {
+            fn schema_decode(__dec: &mut ::sproto::codec::StructDecoder) -> ::std::result::Result<Self, ::sproto::error::DecodeError> {
+                #(#field_declarations)*
+
+                while let Some(__f) = __dec.next_field()? {
+                    match __f.tag() {
+                        #(#match_arms)*
+                        _ => {} // Unknown tag, skip for forward compatibility
+                    }
+                }
+
+                Ok(Self {
+                    #(#field_extractions),*
+                })
+            }
+        }
+    })
+}
+
+/// Generate a decode expression for a scalar field (returns the value, not wrapped in Option).
+fn generate_schema_scalar_decode_expr(field_type: FieldTypeInfo, inner_ty: &Type) -> TokenStream {
+    match field_type {
+        FieldTypeInfo::Integer => quote! { { __f.as_integer()? as #inner_ty } },
+        FieldTypeInfo::Boolean => quote! { { __f.as_bool()? } },
+        FieldTypeInfo::Double => quote! { { __f.as_double()? as #inner_ty } },
+        FieldTypeInfo::String => quote! { { __f.as_string()?.to_owned() } },
+        FieldTypeInfo::Binary => quote! { { __f.as_bytes().to_vec() } },
+        FieldTypeInfo::Struct => quote! { {
+            let mut __sub = __f.as_struct()?;
+            <#inner_ty as ::sproto::SchemaDecode>::schema_decode(&mut __sub)?
+        } },
+    }
+}
+
+/// Generate a decode expression for an array field (returns Vec<element_type>).
+fn generate_schema_array_decode_expr(field_type: FieldTypeInfo, inner_ty: &Type) -> TokenStream {
+    match field_type {
+        FieldTypeInfo::Integer => quote! { {
+            __f.as_integer_array()?.into_iter().map(|__v| __v as #inner_ty).collect()
+        } },
+        FieldTypeInfo::Boolean => quote! { { __f.as_bool_array() } },
+        FieldTypeInfo::Double => quote! { {
+            __f.as_double_array()?.into_iter().map(|__v| __v as #inner_ty).collect()
+        } },
+        FieldTypeInfo::String => quote! { {
+            __f.as_string_array()?.into_iter().map(|__s| __s.to_owned()).collect()
+        } },
+        FieldTypeInfo::Binary => quote! { {
+            __f.as_bytes_array()?.into_iter().map(|__b| __b.to_vec()).collect()
+        } },
+        FieldTypeInfo::Struct => quote! { {
+            let mut __arr = Vec::new();
+            for __elem_result in __f.as_struct_iter()? {
+                let mut __sub = __elem_result?;
+                __arr.push(<#inner_ty as ::sproto::SchemaDecode>::schema_decode(&mut __sub)?);
+            }
+            __arr
+        } },
+    }
+}
+
 /// Generate decoding code for an array field
 fn generate_array_decode(
     ident: &syn::Ident,

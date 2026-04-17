@@ -2,6 +2,7 @@
 
 use serde::ser::{self, Serialize};
 
+use crate::codec::encoder::{FieldEntry, StructEncoder};
 use crate::codec::wire::*;
 use crate::types::{Field, FieldType, Sproto, SprotoType};
 
@@ -27,35 +28,18 @@ enum FieldResult {
     Skip,
 }
 
-#[derive(Clone)]
-enum FieldEntry {
-    Inline(u16),
-    Data { start: usize, len: usize },
+/// Thin wrapper around `StructEncoder` that adds sequential field-name lookup
+/// for serde's `serialize_field(key, value)` API.
+struct SerdeEncoderState<'a> {
+    enc: StructEncoder<'a>,
+    next_field_hint: usize,
 }
 
-struct StructCore<'a> {
-    sproto: &'a Sproto,
-    sproto_type: &'a SprotoType,
-    output: &'a mut Vec<u8>,
-    output_base: usize,
-    entries: Vec<Option<FieldEntry>>,
-    in_order: bool,
-    last_data_tag: i32,
-}
-
-impl<'a> StructCore<'a> {
+impl<'a> SerdeEncoderState<'a> {
     fn new(sproto: &'a Sproto, sproto_type: &'a SprotoType, output: &'a mut Vec<u8>) -> Self {
-        let output_base = output.len();
-        let header_sz = SIZEOF_HEADER + sproto_type.maxn * SIZEOF_FIELD;
-        output.resize(output_base + header_sz, 0);
-        StructCore {
-            sproto,
-            sproto_type,
-            output,
-            output_base,
-            entries: vec![None; sproto_type.fields.len()],
-            in_order: true,
-            last_data_tag: -1,
+        SerdeEncoderState {
+            enc: StructEncoder::new(sproto, sproto_type, output),
+            next_field_hint: 0,
         }
     }
 
@@ -64,143 +48,50 @@ impl<'a> StructCore<'a> {
         key: &'static str,
         value: &T,
     ) -> Result<(), SerdeError> {
-        let sproto = self.sproto;
-        let sproto_type = self.sproto_type;
-        let (idx, field) = match sproto_type.field_index_by_name(key) {
-            Some(v) => v,
-            None => return Ok(()),
+        let sproto_type = self.enc.sproto_type;
+        // Sequential hint: try next expected field first to avoid lookup
+        let (idx, field) = if self.next_field_hint < sproto_type.fields.len()
+            && *sproto_type.fields[self.next_field_hint].name == *key
+        {
+            let idx = self.next_field_hint;
+            (idx, &sproto_type.fields[idx])
+        } else {
+            match sproto_type.field_index_by_name(key) {
+                Some(v) => v,
+                None => return Ok(()),
+            }
         };
-        let data_start = self.output.len();
+        self.next_field_hint = idx + 1;
+        let data_start = self.enc.output.len();
         let field_ser = FieldValueSerializer {
-            sproto,
+            sproto: self.enc.sproto,
             field,
-            buf: &mut *self.output,
+            buf: &mut *self.enc.output,
         };
         match value.serialize(field_ser) {
             Ok(FieldResult::Inline(v)) => {
-                self.entries[idx] = Some(FieldEntry::Inline(v));
+                self.enc.record_field(idx, field.tag, FieldEntry::Inline(v));
             }
             Ok(FieldResult::DataWritten) => {
-                let data_len = self.output.len() - data_start;
-                self.entries[idx] = Some(FieldEntry::Data {
-                    start: data_start,
-                    len: data_len,
-                });
-                let tag = field.tag as i32;
-                if tag <= self.last_data_tag {
-                    self.in_order = false;
-                }
-                self.last_data_tag = tag;
+                let data_len = self.enc.output.len() - data_start;
+                self.enc.record_field(
+                    idx,
+                    field.tag,
+                    FieldEntry::Data {
+                        start: data_start,
+                        len: data_len,
+                    },
+                );
             }
             Ok(FieldResult::Skip) => {
-                self.output.truncate(data_start);
+                self.enc.output.truncate(data_start);
             }
             Err(e) => {
-                self.output.truncate(data_start);
+                self.enc.output.truncate(data_start);
                 return Err(e);
             }
         }
         Ok(())
-    }
-
-    fn assemble(self) -> &'a mut Vec<u8> {
-        if self.in_order {
-            self.assemble_inorder()
-        } else {
-            self.assemble_reorder()
-        }
-    }
-
-    #[inline]
-    fn assemble_inorder(self) -> &'a mut Vec<u8> {
-        let header_sz = SIZEOF_HEADER + self.sproto_type.maxn * SIZEOF_FIELD;
-        let mut index = 0usize;
-        let mut last_tag: i32 = -1;
-        for (i, field) in self.sproto_type.fields.iter().enumerate() {
-            let entry = match &self.entries[i] {
-                Some(e) => e,
-                None => continue,
-            };
-            let tag_gap = field.tag as i32 - last_tag - 1;
-            if tag_gap > 0 {
-                let skip = ((tag_gap - 1) * 2 + 1) as u16;
-                let offset = self.output_base + SIZEOF_HEADER + SIZEOF_FIELD * index;
-                write_u16_le(&mut self.output[offset..], skip);
-                index += 1;
-            }
-            let offset = self.output_base + SIZEOF_HEADER + SIZEOF_FIELD * index;
-            match entry {
-                FieldEntry::Inline(v) => {
-                    write_u16_le(&mut self.output[offset..], *v);
-                }
-                FieldEntry::Data { .. } => {
-                    write_u16_le(&mut self.output[offset..], 0);
-                }
-            }
-            index += 1;
-            last_tag = field.tag as i32;
-        }
-        write_u16_le(&mut self.output[self.output_base..], index as u16);
-        let used_header = SIZEOF_HEADER + index * SIZEOF_FIELD;
-        let unused = header_sz - used_header;
-        if unused > 0 {
-            let data_start = self.output_base + header_sz;
-            let data_end = self.output.len();
-            if data_start < data_end {
-                self.output
-                    .copy_within(data_start..data_end, data_start - unused);
-            }
-            self.output.truncate(data_end - unused);
-        }
-        self.output
-    }
-
-    fn assemble_reorder(self) -> &'a mut Vec<u8> {
-        let header_sz = SIZEOF_HEADER + self.sproto_type.maxn * SIZEOF_FIELD;
-        let data_region_start = self.output_base + header_sz;
-        let saved_data: Vec<u8> = self.output[data_region_start..].to_vec();
-        self.output.truncate(data_region_start);
-        let mut index = 0usize;
-        let mut last_tag: i32 = -1;
-        for (i, field) in self.sproto_type.fields.iter().enumerate() {
-            let entry = match &self.entries[i] {
-                Some(e) => e,
-                None => continue,
-            };
-            let tag_gap = field.tag as i32 - last_tag - 1;
-            if tag_gap > 0 {
-                let skip = ((tag_gap - 1) * 2 + 1) as u16;
-                let offset = self.output_base + SIZEOF_HEADER + SIZEOF_FIELD * index;
-                write_u16_le(&mut self.output[offset..], skip);
-                index += 1;
-            }
-            let offset = self.output_base + SIZEOF_HEADER + SIZEOF_FIELD * index;
-            match entry {
-                FieldEntry::Inline(v) => {
-                    write_u16_le(&mut self.output[offset..], *v);
-                }
-                FieldEntry::Data { start, len } => {
-                    write_u16_le(&mut self.output[offset..], 0);
-                    let rel = *start - data_region_start;
-                    self.output.extend_from_slice(&saved_data[rel..rel + *len]);
-                }
-            }
-            index += 1;
-            last_tag = field.tag as i32;
-        }
-        write_u16_le(&mut self.output[self.output_base..], index as u16);
-        let used_header = SIZEOF_HEADER + index * SIZEOF_FIELD;
-        let unused = header_sz - used_header;
-        if unused > 0 {
-            let data_start = self.output_base + header_sz;
-            let data_end = self.output.len();
-            if data_start < data_end {
-                self.output
-                    .copy_within(data_start..data_end, data_start - unused);
-            }
-            self.output.truncate(data_end - unused);
-        }
-        self.output
     }
 }
 
@@ -226,7 +117,7 @@ impl<'a> ser::Serializer for TopLevelSerializer<'a> {
         _name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        Ok(DirectStructSerializer(StructCore::new(
+        Ok(DirectStructSerializer(SerdeEncoderState::new(
             self.sproto,
             self.sproto_type,
             self.output,
@@ -351,7 +242,7 @@ fn top_err() -> SerdeError {
     SerdeError::UnsupportedType("top-level value must be a struct".into())
 }
 
-struct DirectStructSerializer<'a>(StructCore<'a>);
+struct DirectStructSerializer<'a>(SerdeEncoderState<'a>);
 
 impl<'a> ser::SerializeStruct for DirectStructSerializer<'a> {
     type Ok = ();
@@ -367,13 +258,13 @@ impl<'a> ser::SerializeStruct for DirectStructSerializer<'a> {
         Ok(())
     }
     fn end(self) -> Result<(), Self::Error> {
-        self.0.assemble();
+        self.0.enc.finish();
         Ok(())
     }
 }
 
 struct NestedStructSerializer<'a> {
-    core: StructCore<'a>,
+    state: SerdeEncoderState<'a>,
     len_pos: usize,
 }
 
@@ -385,14 +276,14 @@ impl<'a> ser::SerializeStruct for NestedStructSerializer<'a> {
         key: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
-        self.core.serialize_field_inner(key, value)
+        self.state.serialize_field_inner(key, value)
     }
     fn skip_field(&mut self, _key: &'static str) -> Result<(), Self::Error> {
         Ok(())
     }
     fn end(self) -> Result<FieldResult, Self::Error> {
         let len_pos = self.len_pos;
-        let output = self.core.assemble();
+        let output = self.state.enc.finish();
         let data_start = len_pos + SIZEOF_LENGTH;
         let encoded_len = output.len() - data_start;
         write_u32_le(&mut output[len_pos..], encoded_len as u32);
@@ -581,7 +472,7 @@ impl<'a> ser::Serializer for FieldValueSerializer<'a> {
         let len_pos = self.buf.len();
         self.buf.resize(len_pos + SIZEOF_LENGTH, 0);
         Ok(NestedStructSerializer {
-            core: StructCore::new(self.sproto, sub_type, self.buf),
+            state: SerdeEncoderState::new(self.sproto, sub_type, self.buf),
             len_pos,
         })
     }
@@ -817,7 +708,7 @@ impl<'a> ser::Serializer for ArrayElemSerializer<'a> {
                 ))
             }
         };
-        Ok(DirectStructSerializer(StructCore::new(
+        Ok(DirectStructSerializer(SerdeEncoderState::new(
             self.sproto,
             st,
             self.buf,

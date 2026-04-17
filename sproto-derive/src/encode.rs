@@ -352,6 +352,174 @@ fn generate_scalar_encode(
     }
 }
 
+// ── SchemaEncode generation ─────────────────────────────────────────────
+
+/// Generate the SchemaEncode implementation for a struct.
+///
+/// This is generated alongside SprotoEncode by `#[derive(SprotoEncode)]`.
+/// SchemaEncode uses the Core Engine's StructEncoder (tag-based API) and
+/// enables the 3-parameter `sproto::to_bytes(&schema, &sproto_type, &value)` Direct API.
+pub fn generate_schema_encode(input: &DeriveInput) -> Result<TokenStream> {
+    let name = &input.ident;
+
+    let fields = match &input.data {
+        syn::Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => &fields.named,
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "SchemaEncode only supports structs with named fields",
+                ))
+            }
+        },
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "SchemaEncode only supports structs",
+            ))
+        }
+    };
+
+    let mut field_data: Vec<(FieldInfo, FieldTypeInfo)> = Vec::new();
+    for field in fields {
+        let ident = field.ident.clone().unwrap();
+        let attrs = FieldAttrs::from_attrs(&field.attrs)?;
+        if attrs.skip {
+            continue;
+        }
+        let tag = attrs.tag.ok_or_else(|| {
+            syn::Error::new_spanned(&field.ident, "field must have #[sproto(tag = N)] attribute")
+        })?;
+        let (is_optional, is_vec, inner_type) = analyze_type(&field.ty);
+        let field_type_info = rust_type_to_field_type_info(inner_type.unwrap_or(&field.ty));
+        field_data.push((
+            FieldInfo {
+                ident,
+                tag,
+                is_optional,
+                is_vec,
+                skip: false,
+                use_default: attrs.use_default,
+                span: field.ident.as_ref().unwrap().span(),
+            },
+            field_type_info,
+        ));
+    }
+
+    let mut sorted_fields: Vec<_> = field_data.iter().collect();
+    sorted_fields.sort_by_key(|(f, _)| f.tag);
+
+    let encode_calls: Vec<TokenStream> = sorted_fields
+        .iter()
+        .map(|(field, field_type)| {
+            let ident = &field.ident;
+            let tag = field.tag;
+            if field.is_vec {
+                generate_schema_array_encode(ident, field.is_optional, *field_type, tag)
+            } else {
+                generate_schema_scalar_encode(ident, field.is_optional, *field_type, tag)
+            }
+        })
+        .collect();
+
+    Ok(quote! {
+        impl ::sproto::SchemaEncode for #name {
+            fn schema_encode(&self, __enc: &mut ::sproto::codec::StructEncoder) -> ::std::result::Result<(), ::sproto::error::EncodeError> {
+                #(#encode_calls)*
+                Ok(())
+            }
+        }
+    })
+}
+
+fn generate_schema_scalar_encode(
+    ident: &syn::Ident,
+    is_optional: bool,
+    field_type: FieldTypeInfo,
+    tag: u16,
+) -> TokenStream {
+    let encode = match field_type {
+        FieldTypeInfo::Integer => quote! { __enc.set_integer(#tag, *__val as i64)?; },
+        FieldTypeInfo::Boolean => quote! { __enc.set_bool(#tag, *__val)?; },
+        FieldTypeInfo::Double => quote! { __enc.set_double(#tag, *__val as f64)?; },
+        FieldTypeInfo::String => quote! { __enc.set_string(#tag, __val)?; },
+        FieldTypeInfo::Binary => quote! { __enc.set_bytes(#tag, __val)?; },
+        FieldTypeInfo::Struct => quote! {
+            __enc.encode_nested(#tag, |__child| {
+                ::sproto::SchemaEncode::schema_encode(__val, __child)
+            })?;
+        },
+    };
+
+    if is_optional {
+        quote! {
+            if let Some(ref __val) = self.#ident {
+                #encode
+            }
+        }
+    } else {
+        quote! {
+            {
+                let __val = &self.#ident;
+                #encode
+            }
+        }
+    }
+}
+
+fn generate_schema_array_encode(
+    ident: &syn::Ident,
+    is_optional: bool,
+    field_type: FieldTypeInfo,
+    tag: u16,
+) -> TokenStream {
+    let encode = match field_type {
+        FieldTypeInfo::Integer => quote! {
+            let __tmp: Vec<i64> = __arr.iter().map(|&v| v as i64).collect();
+            __enc.set_integer_array(#tag, &__tmp)?;
+        },
+        FieldTypeInfo::Boolean => quote! {
+            let __tmp: Vec<bool> = __arr.iter().copied().collect();
+            __enc.set_bool_array(#tag, &__tmp)?;
+        },
+        FieldTypeInfo::Double => quote! {
+            let __tmp: Vec<f64> = __arr.iter().map(|&v| v as f64).collect();
+            __enc.set_double_array(#tag, &__tmp)?;
+        },
+        FieldTypeInfo::String => quote! {
+            __enc.set_string_array(#tag, __arr.as_slice())?;
+        },
+        FieldTypeInfo::Binary => quote! {
+            __enc.set_bytes_array(#tag, __arr.as_slice())?;
+        },
+        FieldTypeInfo::Struct => quote! {
+            __enc.encode_struct_array(#tag, |__arr_enc| {
+                for __elem in __arr.iter() {
+                    __arr_enc.encode_element(|__child| {
+                        ::sproto::SchemaEncode::schema_encode(__elem, __child)
+                    })?;
+                }
+                Ok(())
+            })?;
+        },
+    };
+
+    if is_optional {
+        quote! {
+            if let Some(ref __arr) = self.#ident {
+                #encode
+            }
+        }
+    } else {
+        quote! {
+            {
+                let __arr = &self.#ident;
+                #encode
+            }
+        }
+    }
+}
+
 /// Generate encoding code for an array field
 fn generate_array_encode(
     ident: &syn::Ident,

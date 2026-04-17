@@ -1,6 +1,6 @@
 //! Benchmark for sproto encode/decode/pack/unpack operations.
 //!
-//! Supports both Serde API and Derive API benchmarks.
+//! Supports Serde API, Derive API, and Direct API benchmarks.
 //!
 //! Usage:
 //!   cargo build --release --example benchmark
@@ -9,7 +9,8 @@
 //! Modes: encode, decode, encode_pack, unpack_decode
 //! APIs:  serde      -- AddressBook + Serde (Go comparison, default)
 //!        derive     -- AddressBook + Derive (nested struct benchmark)
-//!        compare    -- AddressBook + both APIs (side-by-side comparison)
+//!        direct     -- AddressBook + Direct API (schema-driven, no serde)
+//!        compare    -- AddressBook + all three APIs (side-by-side comparison)
 
 use std::hint::black_box;
 use std::time::Instant;
@@ -219,6 +220,36 @@ fn bench_derive_ab_unpack_decode(packed: &[u8], count: usize) {
 }
 
 // ============================================================================
+// Benchmark Functions - Direct API (AddressBook)
+// ============================================================================
+
+fn bench_direct_ab_encode(schema: &Sproto, st: &SprotoType, ab: &AddressBook, count: usize) {
+    for _ in 0..count {
+        let _ = black_box(sproto::to_bytes(schema, st, ab).unwrap());
+    }
+}
+
+fn bench_direct_ab_decode(schema: &Sproto, st: &SprotoType, data: &[u8], count: usize) {
+    for _ in 0..count {
+        let _: AddressBook = black_box(sproto::from_bytes(schema, st, data).unwrap());
+    }
+}
+
+fn bench_direct_ab_encode_pack(schema: &Sproto, st: &SprotoType, ab: &AddressBook, count: usize) {
+    for _ in 0..count {
+        let encoded = sproto::to_bytes(schema, st, ab).unwrap();
+        let _ = black_box(pack::pack(&encoded));
+    }
+}
+
+fn bench_direct_ab_unpack_decode(schema: &Sproto, st: &SprotoType, packed: &[u8], count: usize) {
+    for _ in 0..count {
+        let unpacked = pack::unpack(packed).unwrap();
+        let _: AddressBook = black_box(sproto::from_bytes(schema, st, &unpacked).unwrap());
+    }
+}
+
+// ============================================================================
 // Benchmark Runner
 // ============================================================================
 
@@ -263,7 +294,8 @@ fn print_usage() {
     eprintln!("  --api API              API to benchmark (default: serde)");
     eprintln!("                         serde   -- AddressBook + Serde (Go comparison)");
     eprintln!("                         derive  -- AddressBook + Derive (nested structs)");
-    eprintln!("                         compare -- AddressBook + both APIs (side-by-side)");
+    eprintln!("                         direct  -- AddressBook + Direct API (schema-driven)");
+    eprintln!("                         compare -- AddressBook + all three APIs (side-by-side)");
 }
 
 // ============================================================================
@@ -292,14 +324,18 @@ fn main() {
         );
         std::process::exit(1);
     }
-    if !["serde", "derive", "compare"].contains(&api.as_str()) {
-        eprintln!("Unknown --api: {}. Use: serde, derive, compare", api);
+    if !["serde", "derive", "direct", "compare"].contains(&api.as_str()) {
+        eprintln!(
+            "Unknown --api: {}. Use: serde, derive, direct, compare",
+            api
+        );
         std::process::exit(1);
     }
 
     match api.as_str() {
         "serde" => run_serde_addressbook(&mode, count),
         "derive" => run_derive_addressbook(&mode, count),
+        "direct" => run_direct_addressbook(&mode, count),
         "compare" => run_compare_addressbook(&mode, count),
         _ => unreachable!(),
     }
@@ -362,6 +398,36 @@ fn run_derive_addressbook(mode: &str, count: usize) {
     });
 }
 
+fn run_direct_addressbook(mode: &str, count: usize) {
+    let schema = sproto::parser::parse(ADDRESSBOOK_SCHEMA).unwrap();
+    let st = schema.get_type("AddressBook").unwrap();
+    let ab = build_addressbook();
+
+    let encoded = sproto::to_bytes(&schema, st, &ab).unwrap();
+    let packed = pack::pack(&encoded);
+
+    let decoded: AddressBook = sproto::from_bytes(&schema, st, &encoded).unwrap();
+    assert_eq!(
+        decoded.person.len(),
+        ab.person.len(),
+        "direct roundtrip failed"
+    );
+
+    eprintln!(
+        "AddressBook(direct): encoded {} bytes, packed {} bytes",
+        encoded.len(),
+        packed.len()
+    );
+
+    run_benchmark("direct", mode, count, || match mode {
+        "encode" => bench_direct_ab_encode(&schema, st, &ab, count),
+        "decode" => bench_direct_ab_decode(&schema, st, &encoded, count),
+        "encode_pack" => bench_direct_ab_encode_pack(&schema, st, &ab, count),
+        "unpack_decode" => bench_direct_ab_unpack_decode(&schema, st, &packed, count),
+        _ => unreachable!(),
+    });
+}
+
 fn run_compare_addressbook(mode: &str, count: usize) {
     let schema = sproto::parser::parse(ADDRESSBOOK_SCHEMA).unwrap();
     let st = schema.get_type("AddressBook").unwrap();
@@ -374,6 +440,10 @@ fn run_compare_addressbook(mode: &str, count: usize) {
     // Derive path
     let derive_encoded = ab.sproto_encode().unwrap();
     let derive_packed = pack::pack(&derive_encoded);
+
+    // Direct path
+    let direct_encoded = sproto::to_bytes(&schema, st, &ab).unwrap();
+    let direct_packed = pack::pack(&direct_encoded);
 
     // Verify roundtrip for each API independently
     let serde_decoded: AddressBook =
@@ -391,12 +461,21 @@ fn run_compare_addressbook(mode: &str, count: usize) {
         "derive roundtrip failed"
     );
 
+    let direct_decoded: AddressBook = sproto::from_bytes(&schema, st, &direct_encoded).unwrap();
+    assert_eq!(
+        direct_decoded.person.len(),
+        ab.person.len(),
+        "direct roundtrip failed"
+    );
+
     eprintln!(
-        "AddressBook: serde {} bytes (packed {}), derive {} bytes (packed {})",
+        "AddressBook: serde {} bytes (packed {}), derive {} bytes (packed {}), direct {} bytes (packed {})",
         serde_encoded.len(),
         serde_packed.len(),
         derive_encoded.len(),
         derive_packed.len(),
+        direct_encoded.len(),
+        direct_packed.len(),
     );
 
     // Run Serde benchmark
@@ -405,6 +484,15 @@ fn run_compare_addressbook(mode: &str, count: usize) {
         "decode" => bench_serde_ab_decode(&schema, st, &serde_encoded, count),
         "encode_pack" => bench_serde_ab_encode_pack(&schema, st, &ab, count),
         "unpack_decode" => bench_serde_ab_unpack_decode(&schema, st, &serde_packed, count),
+        _ => unreachable!(),
+    });
+
+    // Run Direct benchmark
+    run_benchmark("direct", mode, count, || match mode {
+        "encode" => bench_direct_ab_encode(&schema, st, &ab, count),
+        "decode" => bench_direct_ab_decode(&schema, st, &direct_encoded, count),
+        "encode_pack" => bench_direct_ab_encode_pack(&schema, st, &ab, count),
+        "unpack_decode" => bench_direct_ab_unpack_decode(&schema, st, &direct_packed, count),
         _ => unreachable!(),
     });
 

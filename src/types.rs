@@ -125,6 +125,21 @@ impl SprotoType {
         }
     }
 
+    /// Find a field's index by tag, using direct indexing if tags are contiguous,
+    /// otherwise binary search.
+    pub fn field_index_by_tag(&self, tag: u16) -> Option<usize> {
+        if self.base_tag >= 0 {
+            let idx = tag as i32 - self.base_tag;
+            if idx < 0 || idx as usize >= self.fields.len() {
+                None
+            } else {
+                Some(idx as usize)
+            }
+        } else {
+            self.fields.binary_search_by_key(&tag, |f| f.tag).ok()
+        }
+    }
+
     /// Find a field by name, returning both the index and field reference.
     pub fn field_index_by_name(&self, name: &str) -> Option<(usize, &Field)> {
         if self.fields.len() <= 8 {
