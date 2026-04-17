@@ -40,13 +40,7 @@ end)
 
 describe("sproto.load_binary", function()
     it("loads binary schema from testdata", function()
-        local data = read_file(testdata .. "person_data_schema.bin")
-        local sp = sproto.load_binary(data)
-        assert.is_not_nil(sp)
-    end)
-
-    it("loads addressbook schema", function()
-        local data = read_file(testdata .. "addressbook_schema.bin")
+        local data = read_file(testdata .. "schema.bin")
         local sp = sproto.load_binary(data)
         assert.is_not_nil(sp)
     end)
@@ -940,11 +934,11 @@ end)
 -- =============================================================================
 
 describe("cross-compatibility with C/Lua reference", function()
-    describe("person_data schema", function()
+    describe("unified schema", function()
         local sp
 
         before_each(function()
-            local data = read_file(testdata .. "person_data_schema.bin")
+            local data = read_file(testdata .. "schema.bin")
             sp = sproto.load_binary(data)
         end)
 
@@ -954,7 +948,29 @@ describe("cross-compatibility with C/Lua reference", function()
             
             assert.are.equal("Alice", decoded.name)
             assert.are.equal(13, decoded.age)
-            assert.are.equal(false, decoded.marital)
+            assert.are.equal(false, decoded.active)
+        end)
+
+        it("decodes all_scalars (Person: all scalar types)", function()
+            local encoded = read_file(testdata .. "all_scalars_encoded.bin")
+            local decoded = sp:decode("Person", encoded)
+            
+            assert.are.equal("Alice", decoded.name)
+            assert.are.equal(30, decoded.age)
+            assert.are.equal(true, decoded.active)
+            assert.is_near(0.01171875, decoded.score, 0.0000001)
+            assert.are.equal(string.char(0x28, 0x29, 0x30, 0x31), decoded.photo)
+            assert.are.equal(182, decoded.fpn)
+        end)
+
+        it("decodes nested_struct (Person: with phone)", function()
+            local encoded = read_file(testdata .. "nested_struct_encoded.bin")
+            local decoded = sp:decode("Person", encoded)
+            
+            assert.are.equal("Alice", decoded.name)
+            assert.is_not_nil(decoded.phone)
+            assert.are.equal("123456789", decoded.phone.number)
+            assert.are.equal(1, decoded.phone.type)
         end)
 
         it("decodes struct_array (Person with children)", function()
@@ -971,9 +987,9 @@ describe("cross-compatibility with C/Lua reference", function()
             assert.are.equal(5, decoded.children[2].age)
         end)
 
-        it("decodes number_array (Data: integer array)", function()
-            local encoded = read_file(testdata .. "number_array_encoded.bin")
-            local decoded = sp:decode("Data", encoded)
+        it("decodes int_array (Person: integer array)", function()
+            local encoded = read_file(testdata .. "int_array_encoded.bin")
+            local decoded = sp:decode("Person", encoded)
             
             assert.is_table(decoded.numbers)
             assert.are.equal(5, #decoded.numbers)
@@ -982,9 +998,9 @@ describe("cross-compatibility with C/Lua reference", function()
             end
         end)
 
-        it("decodes big_number_array (Data: large integers)", function()
-            local encoded = read_file(testdata .. "big_number_array_encoded.bin")
-            local decoded = sp:decode("Data", encoded)
+        it("decodes big_int_array (Person: large integers)", function()
+            local encoded = read_file(testdata .. "big_int_array_encoded.bin")
+            local decoded = sp:decode("Person", encoded)
             
             assert.is_table(decoded.numbers)
             assert.are.equal(3, #decoded.numbers)
@@ -993,43 +1009,76 @@ describe("cross-compatibility with C/Lua reference", function()
             assert.are.equal((1 << 32) + 3, decoded.numbers[3])
         end)
 
-        it("decodes bool_array (Data: boolean array)", function()
+        it("decodes bool_array (Person: boolean array)", function()
             local encoded = read_file(testdata .. "bool_array_encoded.bin")
-            local decoded = sp:decode("Data", encoded)
+            local decoded = sp:decode("Person", encoded)
             
-            assert.is_table(decoded.bools)
-            assert.are.equal(3, #decoded.bools)
-            assert.are.equal(false, decoded.bools[1])
-            assert.are.equal(true, decoded.bools[2])
-            assert.are.equal(false, decoded.bools[3])
+            assert.is_table(decoded.flags)
+            assert.are.equal(3, #decoded.flags)
+            assert.are.equal(false, decoded.flags[1])
+            assert.are.equal(true, decoded.flags[2])
+            assert.are.equal(false, decoded.flags[3])
         end)
 
-        it("decodes number (Data: large negative integer)", function()
+        it("decodes number (Person: large integers)", function()
             local encoded = read_file(testdata .. "number_encoded.bin")
-            local decoded = sp:decode("Data", encoded)
+            local decoded = sp:decode("Person", encoded)
             
-            assert.are.equal(100000, decoded.number)
-            assert.are.equal(-10000000000, decoded.bignumber)
+            assert.are.equal(100000, decoded.age)
+            assert.are.equal(-10000000000, decoded.id)
         end)
 
-        it("decodes double (Data: double and double array)", function()
+        it("decodes double (Person: double and double array)", function()
             local encoded = read_file(testdata .. "double_encoded.bin")
-            local decoded = sp:decode("Data", encoded)
+            local decoded = sp:decode("Person", encoded)
             
-            assert.is_near(0.01171875, decoded.double, 0.0000001)
-            assert.is_table(decoded.doubles)
-            assert.are.equal(3, #decoded.doubles)
-            assert.is_near(0.01171875, decoded.doubles[1], 0.0000001)
-            assert.is_near(23, decoded.doubles[2], 0.0000001)
-            assert.is_near(4, decoded.doubles[3], 0.0000001)
+            assert.is_near(0.01171875, decoded.score, 0.0000001)
+            assert.is_table(decoded.values)
+            assert.are.equal(3, #decoded.values)
+            assert.is_near(0.01171875, decoded.values[1], 0.0000001)
+            assert.is_near(23, decoded.values[2], 0.0000001)
+            assert.is_near(4, decoded.values[3], 0.0000001)
         end)
 
-        it("decodes fixed_point (Data: fixed point number)", function()
+        it("decodes string_array (Person: string array with UTF-8)", function()
+            local encoded = read_file(testdata .. "string_array_encoded.bin")
+            local decoded = sp:decode("Person", encoded)
+            
+            assert.is_table(decoded.tags)
+            assert.are.equal(3, #decoded.tags)
+            assert.are.equal("hello", decoded.tags[1])
+            assert.are.equal("world", decoded.tags[2])
+            assert.are.equal("\xe4\xbd\xa0\xe5\xa5\xbd", decoded.tags[3])
+        end)
+
+        it("decodes fixed_point (Person: fixed point number)", function()
             local encoded = read_file(testdata .. "fixed_point_encoded.bin")
-            local decoded = sp:decode("Data", encoded)
+            local decoded = sp:decode("Person", encoded)
             
             -- fpn is integer(2), stored as 182 (1.82 * 100)
             assert.are.equal(182, decoded.fpn)
+        end)
+
+        it("decodes full (Person: all 14 fields)", function()
+            local encoded = read_file(testdata .. "full_encoded.bin")
+            local decoded = sp:decode("Person", encoded)
+            
+            assert.are.equal("Alice", decoded.name)
+            assert.are.equal(30, decoded.age)
+            assert.are.equal(true, decoded.active)
+            assert.is_near(0.01171875, decoded.score, 0.0000001)
+            assert.are.equal(string.char(0xDE, 0xAD, 0xBE, 0xEF), decoded.photo)
+            assert.are.equal(182, decoded.fpn)
+            assert.are.equal(10000, decoded.id)
+            assert.are.equal("123456789", decoded.phone.number)
+            assert.are.equal(1, decoded.phone.type)
+            assert.are.equal(2, #decoded.phones)
+            assert.are.equal(1, #decoded.children)
+            assert.are.equal("Bob", decoded.children[1].name)
+            assert.are.equal(3, #decoded.tags)
+            assert.are.equal(5, #decoded.numbers)
+            assert.are.equal(3, #decoded.flags)
+            assert.are.equal(3, #decoded.values)
         end)
 
         -- Test pack/unpack with reference data
@@ -1049,37 +1098,6 @@ describe("cross-compatibility with C/Lua reference", function()
             
             assert.are.equal("Bob", decoded.name)
             assert.are.equal(2, #decoded.children)
-        end)
-    end)
-
-    describe("addressbook schema", function()
-        local sp
-
-        before_each(function()
-            local data = read_file(testdata .. "addressbook_schema.bin")
-            sp = sproto.load_binary(data)
-        end)
-
-        it("decodes addressbook with map", function()
-            local encoded = read_file(testdata .. "addressbook_encoded.bin")
-            local decoded = sp:decode("AddressBook", encoded)
-            
-            -- person is a map indexed by id
-            assert.is_table(decoded.person)
-            
-            -- others is a regular array
-            assert.is_table(decoded.others)
-            assert.are.equal(1, #decoded.others)
-            assert.are.equal("Carol", decoded.others[1].name)
-        end)
-
-        it("unpacks addressbook_packed", function()
-            local packed = read_file(testdata .. "addressbook_packed.bin")
-            local unpacked = sproto.unpack(packed)
-            local decoded = sp:decode("AddressBook", unpacked)
-            
-            assert.is_table(decoded.person)
-            assert.is_table(decoded.others)
         end)
     end)
 
