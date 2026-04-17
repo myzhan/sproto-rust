@@ -412,11 +412,7 @@ impl<'de> de::SeqAccess<'de> for NumArrayAccess<'de> {
         }
     }
     fn size_hint(&self) -> Option<usize> {
-        if self.int_len == 0 {
-            Some(0)
-        } else {
-            Some((self.data.len() - self.offset) / self.int_len)
-        }
+        (self.data.len() - self.offset).checked_div(self.int_len)
     }
 }
 
