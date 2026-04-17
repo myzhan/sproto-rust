@@ -3,7 +3,6 @@
 //! These tests cover:
 //! - Cross-validation with C/Lua binary fixtures
 //! - Cross-validation with Go inline byte vectors
-//! - Wire compatibility between Direct API and Serde API
 //! - Full type coverage (all scalar and array types)
 //! - Edge cases and error handling
 
@@ -659,42 +658,48 @@ fn test_direct_decode_full() {
 // =============================================================================
 
 fn go_data_schema() -> sproto::Sproto {
-    sproto::parser::parse(
-        r#"
-        .Data {
-            numbers 0 : *integer
-            bools 1 : *boolean
-            number 2 : integer
-            bignumber 3 : integer
-            double 4 : double
-            doubles 5 : *double
-            strings 7 : *string
-            bytes 8 : binary
-        }
-    "#,
-    )
-    .unwrap()
+    use sproto::types::{Field, FieldType};
+    let mut s = sproto::Sproto::new();
+    s.add_type(
+        "Data",
+        vec![
+            Field::array("numbers", 0, FieldType::Integer),
+            Field::array("bools", 1, FieldType::Boolean),
+            Field::new("number", 2, FieldType::Integer),
+            Field::new("bignumber", 3, FieldType::Integer),
+            Field::new("double", 4, FieldType::Double),
+            Field::array("doubles", 5, FieldType::Double),
+            Field::array("strings", 7, FieldType::String),
+            Field::new("bytes", 8, FieldType::Binary),
+        ],
+    );
+    s
 }
 
 fn go_addressbook_schema() -> sproto::Sproto {
-    sproto::parser::parse(
-        r#"
-        .PhoneNumber {
-            number 0 : string
-            type 1 : integer
-        }
-        .Person {
-            name 0 : string
-            id 1 : integer
-            email 2 : string
-            phone 3 : *PhoneNumber
-        }
-        .AddressBook {
-            person 0 : *Person
-        }
-    "#,
-    )
-    .unwrap()
+    use sproto::types::{Field, FieldType};
+    let mut s = sproto::Sproto::new();
+    let phone_idx = s.add_type(
+        "PhoneNumber",
+        vec![
+            Field::new("number", 0, FieldType::String),
+            Field::new("type", 1, FieldType::Integer),
+        ],
+    );
+    let person_idx = s.add_type(
+        "Person",
+        vec![
+            Field::new("name", 0, FieldType::String),
+            Field::new("id", 1, FieldType::Integer),
+            Field::new("email", 2, FieldType::String),
+            Field::array("phone", 3, FieldType::Struct(phone_idx)),
+        ],
+    );
+    s.add_type(
+        "AddressBook",
+        vec![Field::array("person", 0, FieldType::Struct(person_idx))],
+    );
+    s
 }
 
 /// Bytes: Data{bytes:[0x28,0x29,0x30,0x31]}
@@ -909,267 +914,40 @@ fn test_direct_decode_go_addressbook() {
 }
 
 // =============================================================================
-// Wire compatibility: Direct API vs Serde API produce identical bytes
-// =============================================================================
-
-#[cfg(feature = "serde")]
-mod wire_compat {
-    use super::*;
-    use serde::Serialize;
-
-    mod opt_bytes {
-        use serde::Serializer;
-
-        pub fn serialize<S: Serializer>(val: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
-            match val {
-                Some(b) => serde_bytes::serialize(b, s),
-                None => s.serialize_none(),
-            }
-        }
-    }
-
-    #[derive(Serialize, Default)]
-    struct PhoneNumberEnc {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        number: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        r#type: Option<i64>,
-    }
-
-    #[derive(Serialize, Default)]
-    struct PersonEnc {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        name: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        age: Option<i64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        active: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        score: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none", with = "opt_bytes")]
-        photo: Option<Vec<u8>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        fpn: Option<i64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<i64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        phone: Option<PhoneNumberEnc>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        phones: Option<Vec<PhoneNumberEnc>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        children: Option<Vec<PersonEnc>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        tags: Option<Vec<String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        numbers: Option<Vec<i64>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        flags: Option<Vec<bool>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        values: Option<Vec<f64>>,
-    }
-
-    fn serde_encode<T: Serialize>(sproto: &sproto::Sproto, type_name: &str, value: &T) -> Vec<u8> {
-        let st = sproto.get_type(type_name).unwrap();
-        sproto::serde::to_bytes(sproto, st, value).unwrap()
-    }
-
-    #[test]
-    fn test_wire_compat_simple_struct() {
-        let sproto = load_sproto();
-        let direct = direct_encode(&sproto, "Person", |enc| {
-            enc.set_string(0, "Alice")?;
-            enc.set_integer(1, 13)?;
-            enc.set_bool(2, false)?;
-            Ok(())
-        });
-        let serde = serde_encode(
-            &sproto,
-            "Person",
-            &PersonEnc {
-                name: Some("Alice".into()),
-                age: Some(13),
-                active: Some(false),
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            hexdump(&direct),
-            hexdump(&serde),
-            "Direct API and Serde API should produce identical wire bytes"
-        );
-    }
-
-    #[test]
-    fn test_wire_compat_struct_array() {
-        let sproto = load_sproto();
-        let direct = direct_encode(&sproto, "Person", |enc| {
-            enc.set_string(0, "Bob")?;
-            enc.set_integer(1, 40)?;
-            enc.encode_struct_array(9, |arr| {
-                arr.encode_element(|e| {
-                    e.set_string(0, "Alice")?;
-                    e.set_integer(1, 13)?;
-                    Ok(())
-                })?;
-                arr.encode_element(|e| {
-                    e.set_string(0, "Carol")?;
-                    e.set_integer(1, 5)?;
-                    Ok(())
-                })?;
-                Ok(())
-            })?;
-            Ok(())
-        });
-        let serde = serde_encode(
-            &sproto,
-            "Person",
-            &PersonEnc {
-                name: Some("Bob".into()),
-                age: Some(40),
-                children: Some(vec![
-                    PersonEnc {
-                        name: Some("Alice".into()),
-                        age: Some(13),
-                        ..Default::default()
-                    },
-                    PersonEnc {
-                        name: Some("Carol".into()),
-                        age: Some(5),
-                        ..Default::default()
-                    },
-                ]),
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            hexdump(&direct),
-            hexdump(&serde),
-            "Direct API and Serde API should produce identical wire bytes for struct arrays"
-        );
-    }
-
-    #[test]
-    fn test_wire_compat_int_array() {
-        let sproto = load_sproto();
-        let direct = direct_encode(&sproto, "Person", |enc| {
-            enc.set_integer_array(11, &[1, 2, 3, 4, 5])?;
-            Ok(())
-        });
-        let serde = serde_encode(
-            &sproto,
-            "Person",
-            &PersonEnc {
-                numbers: Some(vec![1, 2, 3, 4, 5]),
-                ..Default::default()
-            },
-        );
-        assert_eq!(hexdump(&direct), hexdump(&serde));
-    }
-
-    #[test]
-    fn test_wire_compat_double_and_double_array() {
-        let sproto = load_sproto();
-        let direct = direct_encode(&sproto, "Person", |enc| {
-            enc.set_double(3, 0.01171875)?;
-            enc.set_double_array(13, &[0.01171875, 23.0, 4.0])?;
-            Ok(())
-        });
-        let serde = serde_encode(
-            &sproto,
-            "Person",
-            &PersonEnc {
-                score: Some(0.01171875),
-                values: Some(vec![0.01171875, 23.0, 4.0]),
-                ..Default::default()
-            },
-        );
-        assert_eq!(hexdump(&direct), hexdump(&serde));
-    }
-
-    #[test]
-    fn test_wire_compat_serde_decode_direct_bytes() {
-        use serde::Deserialize;
-        let sproto = load_sproto();
-        let direct = direct_encode(&sproto, "Person", |enc| {
-            enc.set_string(0, "TestUser")?;
-            enc.set_integer(1, 99)?;
-            enc.set_bool(2, true)?;
-            Ok(())
-        });
-        // Decode the Direct API output using Serde
-        #[derive(Deserialize, Debug)]
-        struct PersonDec {
-            #[serde(default)]
-            name: Option<String>,
-            #[serde(default)]
-            age: Option<i64>,
-            #[serde(default)]
-            active: Option<bool>,
-        }
-        let st = sproto.get_type("Person").unwrap();
-        let decoded: PersonDec = sproto::serde::from_bytes(&sproto, st, &direct).unwrap();
-        assert_eq!(decoded.name.as_deref(), Some("TestUser"));
-        assert_eq!(decoded.age, Some(99));
-        assert_eq!(decoded.active, Some(true));
-    }
-
-    #[test]
-    fn test_wire_compat_direct_decode_serde_bytes() {
-        let sproto = load_sproto();
-        let serde = serde_encode(
-            &sproto,
-            "Person",
-            &PersonEnc {
-                name: Some("FromSerde".into()),
-                age: Some(50),
-                active: Some(false),
-                ..Default::default()
-            },
-        );
-        // Decode the Serde API output using StructDecoder
-        let st = sproto.get_type("Person").unwrap();
-        let mut dec = StructDecoder::new(&sproto, st, &serde).unwrap();
-        let fields = decode_fields(&mut dec);
-
-        let name_field = fields.iter().find(|f| f.tag() == 0).unwrap();
-        assert_eq!(name_field.as_string().unwrap(), "FromSerde");
-
-        let age_field = fields.iter().find(|f| f.tag() == 1).unwrap();
-        assert_eq!(age_field.as_integer().unwrap(), 50);
-
-        let active_field = fields.iter().find(|f| f.tag() == 2).unwrap();
-        assert!(!active_field.as_bool().unwrap());
-    }
-}
-
-// =============================================================================
 // Full roundtrip encode->decode with StructEncoder/StructDecoder
 // =============================================================================
 
 fn roundtrip_schema() -> sproto::Sproto {
-    sproto::parser::parse(
-        r#"
-        .Person {
-            name 0 : string
-            age 1 : integer
-            active 2 : boolean
-            score 3 : double
-            data 4 : binary
-        }
-        .Data {
-            numbers 0 : *integer
-            names 1 : *string
-            flags 2 : *boolean
-            values 3 : *double
-        }
-        .Team {
-            name 0 : string
-            leader 1 : Person
-            members 2 : *Person
-        }
-    "#,
-    )
-    .unwrap()
+    use sproto::types::{Field, FieldType};
+    let mut s = sproto::Sproto::new();
+    let person_idx = s.add_type(
+        "Person",
+        vec![
+            Field::new("name", 0, FieldType::String),
+            Field::new("age", 1, FieldType::Integer),
+            Field::new("active", 2, FieldType::Boolean),
+            Field::new("score", 3, FieldType::Double),
+            Field::new("data", 4, FieldType::Binary),
+        ],
+    );
+    s.add_type(
+        "Data",
+        vec![
+            Field::array("numbers", 0, FieldType::Integer),
+            Field::array("names", 1, FieldType::String),
+            Field::array("flags", 2, FieldType::Boolean),
+            Field::array("values", 3, FieldType::Double),
+        ],
+    );
+    s.add_type(
+        "Team",
+        vec![
+            Field::new("name", 0, FieldType::String),
+            Field::new("leader", 1, FieldType::Struct(person_idx)),
+            Field::array("members", 2, FieldType::Struct(person_idx)),
+        ],
+    );
+    s
 }
 
 #[test]

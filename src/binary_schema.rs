@@ -465,10 +465,8 @@ fn build_sproto(
         // Fields should already be sorted by tag from the binary format
         fields.sort_by_key(|f| f.tag);
 
-        let (base_tag, maxn) = compute_base_tag_and_maxn(&fields);
-
         types_by_name.insert(rt.name.clone(), idx);
-        types_list.push(SprotoType::new(rt.name.clone(), fields, base_tag, maxn));
+        types_list.push(SprotoType::new(rt.name.clone(), fields));
     }
 
     // Build protocols
@@ -525,28 +523,4 @@ fn build_sproto(
         protocols_by_name,
         protocols_by_tag,
     })
-}
-
-fn compute_base_tag_and_maxn(fields: &[Field]) -> (i32, usize) {
-    if fields.is_empty() {
-        return (-1, 0);
-    }
-
-    let n = fields.len();
-    let mut maxn = n;
-    let mut last: i32 = -1;
-
-    for f in fields {
-        let tag = f.tag as i32;
-        if tag > last + 1 {
-            maxn += 1;
-        }
-        last = tag;
-    }
-
-    let base = fields[0].tag as i32;
-    let span = fields[n - 1].tag as i32 - base + 1;
-    let base_tag = if span as usize != n { -1 } else { base };
-
-    (base_tag, maxn)
 }

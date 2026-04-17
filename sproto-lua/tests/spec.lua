@@ -16,38 +16,27 @@ end
 -- Path to testdata directory (relative to sproto-lua)
 local testdata = "../tests/testdata/"
 
+-- Pre-load binary schemas used across tests
+local function load_schema()
+    return sproto.load_binary(read_file(testdata .. "schema.bin"))
+end
+
+local function load_rpc_schema()
+    return sproto.load_binary(read_file(testdata .. "rpc_schema.bin"))
+end
+
 -- =============================================================================
 -- Basic Functionality Tests
 -- =============================================================================
 
-describe("sproto.parse", function()
-    it("parses valid schema", function()
-        local sp = sproto.parse([[
-.Person {
-    name 0 : string
-    age 1 : integer
-}
-]])
-        assert.is_not_nil(sp)
-    end)
-
-    it("fails on invalid schema", function()
-        assert.has_error(function()
-            sproto.parse("invalid schema {{{")
-        end)
-    end)
-end)
-
 describe("sproto.load_binary", function()
     it("loads binary schema from testdata", function()
-        local data = read_file(testdata .. "schema.bin")
-        local sp = sproto.load_binary(data)
+        local sp = load_schema()
         assert.is_not_nil(sp)
     end)
 
     it("loads rpc schema", function()
-        local data = read_file(testdata .. "rpc_schema.bin")
-        local sp = sproto.load_binary(data)
+        local sp = load_rpc_schema()
         assert.is_not_nil(sp)
     end)
 end)
@@ -56,13 +45,8 @@ describe("encode/decode", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Person {
-    name 0 : string
-    age 1 : integer
-    marital 2 : boolean
-}
-]])
+        -- schema.bin Person: name 0, age 1, active 2 (boolean), ...
+        sp = load_schema()
     end)
 
     it("encodes simple struct", function()
@@ -73,21 +57,21 @@ describe("encode/decode", function()
     end)
 
     it("decodes to original values", function()
-        local data = {name = "Bob", age = 25, marital = true}
+        local data = {name = "Bob", age = 25, active = true}
         local encoded = sp:encode("Person", data)
         local decoded = sp:decode("Person", encoded)
-        
+
         assert.are.equal("Bob", decoded.name)
         assert.are.equal(25, decoded.age)
-        assert.are.equal(true, decoded.marital)
+        assert.are.equal(true, decoded.active)
     end)
 
     it("handles boolean false correctly", function()
-        local data = {name = "Carol", age = 20, marital = false}
+        local data = {name = "Carol", age = 20, active = false}
         local encoded = sp:encode("Person", data)
         local decoded = sp:decode("Person", encoded)
-        
-        assert.are.equal(false, decoded.marital)
+
+        assert.are.equal(false, decoded.active)
     end)
 
     it("fails on unknown type", function()
@@ -101,21 +85,16 @@ describe("double type", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Point {
-    x 0 : double
-    y 1 : double
-}
-]])
+        -- schema.bin Person has: score 3 : double, values 13 : *double
+        sp = load_schema()
     end)
 
     it("encodes and decodes doubles", function()
-        local data = {x = 3.14159, y = -2.71828}
-        local encoded = sp:encode("Point", data)
-        local decoded = sp:decode("Point", encoded)
-        
-        assert.is_near(3.14159, decoded.x, 0.00001)
-        assert.is_near(-2.71828, decoded.y, 0.00001)
+        local data = {score = 3.14159}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+
+        assert.is_near(3.14159, decoded.score, 0.00001)
     end)
 end)
 
@@ -124,21 +103,18 @@ describe("arrays", function()
         local sp
 
         before_each(function()
-            sp = sproto.parse([[
-.Numbers {
-    values 0 : *integer
-}
-]])
+            -- schema.bin Person has: numbers 11 : *integer
+            sp = load_schema()
         end)
 
         it("encodes and decodes integer array", function()
-            local data = {values = {10, 20, 30, 40, 50}}
-            local encoded = sp:encode("Numbers", data)
-            local decoded = sp:decode("Numbers", encoded)
-            
-            assert.are.equal(5, #decoded.values)
+            local data = {numbers = {10, 20, 30, 40, 50}}
+            local encoded = sp:encode("Person", data)
+            local decoded = sp:decode("Person", encoded)
+
+            assert.are.equal(5, #decoded.numbers)
             for i = 1, 5 do
-                assert.are.equal(data.values[i], decoded.values[i])
+                assert.are.equal(data.numbers[i], decoded.numbers[i])
             end
         end)
     end)
@@ -147,22 +123,19 @@ describe("arrays", function()
         local sp
 
         before_each(function()
-            sp = sproto.parse([[
-.Tags {
-    items 0 : *string
-}
-]])
+            -- schema.bin Person has: tags 10 : *string
+            sp = load_schema()
         end)
 
         it("encodes and decodes string array", function()
-            local data = {items = {"apple", "banana", "cherry"}}
-            local encoded = sp:encode("Tags", data)
-            local decoded = sp:decode("Tags", encoded)
-            
-            assert.are.equal(3, #decoded.items)
-            assert.are.equal("apple", decoded.items[1])
-            assert.are.equal("banana", decoded.items[2])
-            assert.are.equal("cherry", decoded.items[3])
+            local data = {tags = {"apple", "banana", "cherry"}}
+            local encoded = sp:encode("Person", data)
+            local decoded = sp:decode("Person", encoded)
+
+            assert.are.equal(3, #decoded.tags)
+            assert.are.equal("apple", decoded.tags[1])
+            assert.are.equal("banana", decoded.tags[2])
+            assert.are.equal("cherry", decoded.tags[3])
         end)
     end)
 
@@ -170,23 +143,20 @@ describe("arrays", function()
         local sp
 
         before_each(function()
-            sp = sproto.parse([[
-.Flags {
-    values 0 : *boolean
-}
-]])
+            -- schema.bin Person has: flags 12 : *boolean
+            sp = load_schema()
         end)
 
         it("encodes and decodes boolean array", function()
-            local data = {values = {true, false, true, false}}
-            local encoded = sp:encode("Flags", data)
-            local decoded = sp:decode("Flags", encoded)
-            
-            assert.are.equal(4, #decoded.values)
-            assert.are.equal(true, decoded.values[1])
-            assert.are.equal(false, decoded.values[2])
-            assert.are.equal(true, decoded.values[3])
-            assert.are.equal(false, decoded.values[4])
+            local data = {flags = {true, false, true, false}}
+            local encoded = sp:encode("Person", data)
+            local decoded = sp:decode("Person", encoded)
+
+            assert.are.equal(4, #decoded.flags)
+            assert.are.equal(true, decoded.flags[1])
+            assert.are.equal(false, decoded.flags[2])
+            assert.are.equal(true, decoded.flags[3])
+            assert.are.equal(false, decoded.flags[4])
         end)
     end)
 end)
@@ -195,32 +165,65 @@ describe("nested structs", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Address {
-    city 0 : string
-    zip 1 : string
-}
-.Person {
-    name 0 : string
-    address 1 : Address
-}
-]])
+        -- schema.bin Person has: phone 7 : PhoneNumber, phones 8 : *PhoneNumber
+        -- children 9 : *Person (recursive)
+        sp = load_schema()
     end)
 
     it("encodes and decodes nested struct", function()
         local data = {
             name = "Charlie",
-            address = {
-                city = "New York",
-                zip = "10001"
+            phone = {
+                number = "123456789",
+                type = 1
             }
         }
         local encoded = sp:encode("Person", data)
         local decoded = sp:decode("Person", encoded)
-        
+
         assert.are.equal("Charlie", decoded.name)
-        assert.are.equal("New York", decoded.address.city)
-        assert.are.equal("10001", decoded.address.zip)
+        assert.are.equal("123456789", decoded.phone.number)
+        assert.are.equal(1, decoded.phone.type)
+    end)
+
+    it("encodes and decodes struct array", function()
+        local data = {
+            name = "Parent",
+            phones = {
+                {number = "111", type = 1},
+                {number = "222", type = 2},
+            }
+        }
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+
+        assert.are.equal("Parent", decoded.name)
+        assert.are.equal(2, #decoded.phones)
+        assert.are.equal("111", decoded.phones[1].number)
+        assert.are.equal(1, decoded.phones[1].type)
+        assert.are.equal("222", decoded.phones[2].number)
+        assert.are.equal(2, decoded.phones[2].type)
+    end)
+
+    it("encodes and decodes recursive struct (children)", function()
+        local data = {
+            name = "Bob",
+            age = 40,
+            children = {
+                {name = "Alice", age = 13},
+                {name = "Carol", age = 5},
+            }
+        }
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+
+        assert.are.equal("Bob", decoded.name)
+        assert.are.equal(40, decoded.age)
+        assert.are.equal(2, #decoded.children)
+        assert.are.equal("Alice", decoded.children[1].name)
+        assert.are.equal(13, decoded.children[1].age)
+        assert.are.equal("Carol", decoded.children[2].name)
+        assert.are.equal(5, decoded.children[2].age)
     end)
 end)
 
@@ -228,24 +231,20 @@ describe("pack/unpack", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Data {
-    value 0 : integer
-}
-]])
+        sp = load_schema()
     end)
 
     it("packs and unpacks data", function()
-        local encoded = sp:encode("Data", {value = 12345})
+        local encoded = sp:encode("Person", {age = 12345})
         local packed = sproto.pack(encoded)
         local unpacked = sproto.unpack(packed)
-        
+
         assert.is_string(packed)
         assert.is_string(unpacked)
-        
+
         -- Verify unpacked data can be decoded
-        local decoded = sp:decode("Data", unpacked)
-        assert.are.equal(12345, decoded.value)
+        local decoded = sp:decode("Person", unpacked)
+        assert.are.equal(12345, decoded.age)
     end)
 end)
 
@@ -253,24 +252,14 @@ describe("schema introspection", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Person {
-    name 0 : string
-    age 1 : integer
-}
-.LoginReq { username 0 : string }
-.LoginResp { ok 0 : boolean }
-login 1 {
-    request LoginReq
-    response LoginResp
-}
-]])
+        -- rpc_schema.bin has types and protocols
+        sp = load_rpc_schema()
     end)
 
     it("get_type returns type info", function()
-        local typeinfo = sp:get_type("Person")
+        local typeinfo = sp:get_type("package")
         assert.is_not_nil(typeinfo)
-        assert.are.equal("Person", typeinfo.name)
+        assert.are.equal("package", typeinfo.name)
         assert.is_table(typeinfo.fields)
     end)
 
@@ -280,9 +269,9 @@ login 1 {
     end)
 
     it("get_protocol returns protocol info", function()
-        local proto = sp:get_protocol("login")
+        local proto = sp:get_protocol("foobar")
         assert.is_not_nil(proto)
-        assert.are.equal("login", proto.name)
+        assert.are.equal("foobar", proto.name)
         assert.are.equal(1, proto.tag)
     end)
 
@@ -296,27 +285,24 @@ describe("unicode support", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Message {
-    text 0 : string
-}
-]])
+        -- schema.bin Person has: name 0 : string
+        sp = load_schema()
     end)
 
     it("handles unicode strings", function()
-        local data = {text = "Hello 世界 🌍"}
-        local encoded = sp:encode("Message", data)
-        local decoded = sp:decode("Message", encoded)
-        
-        assert.are.equal("Hello 世界 🌍", decoded.text)
+        local data = {name = "Hello \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x8c\x8d"}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+
+        assert.are.equal("Hello \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x8c\x8d", decoded.name)
     end)
 
     it("handles Chinese characters", function()
-        local data = {text = "你好，世界！"}
-        local encoded = sp:encode("Message", data)
-        local decoded = sp:decode("Message", encoded)
-        
-        assert.are.equal("你好，世界！", decoded.text)
+        local data = {name = "\xe4\xbd\xa0\xe5\xa5\xbd\xef\xbc\x8c\xe4\xb8\x96\xe7\x95\x8c\xef\xbc\x81"}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+
+        assert.are.equal("\xe4\xbd\xa0\xe5\xa5\xbd\xef\xbc\x8c\xe4\xb8\x96\xe7\x95\x8c\xef\xbc\x81", decoded.name)
     end)
 end)
 
@@ -328,32 +314,22 @@ describe("binary type", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-    strings 7 : *string
-    bytes 8 : binary
-}
-]])
+        -- schema.bin Person has: photo 4 : binary
+        sp = load_schema()
     end)
 
     it("encodes and decodes binary data", function()
-        local data = {bytes = string.char(0x28, 0x29, 0x30, 0x31)}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
-        assert.are.equal(string.char(0x28, 0x29, 0x30, 0x31), decoded.bytes)
+        local data = {photo = string.char(0x28, 0x29, 0x30, 0x31)}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+        assert.are.equal(string.char(0x28, 0x29, 0x30, 0x31), decoded.photo)
     end)
 
     it("handles empty binary field", function()
-        local data = {bytes = ""}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
-        assert.are.equal("", decoded.bytes)
+        local data = {photo = ""}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+        assert.are.equal("", decoded.photo)
     end)
 end)
 
@@ -361,36 +337,30 @@ describe("large integers", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-}
-]])
+        -- schema.bin Person has: age 1 : integer, id 6 : integer
+        sp = load_schema()
     end)
 
     it("encodes 32-bit integer in data part (100000)", function()
-        local data = {number = 100000}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
-        assert.are.equal(100000, decoded.number)
+        local data = {age = 100000}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+        assert.are.equal(100000, decoded.age)
     end)
 
     it("encodes negative 64-bit integer (-10000000000)", function()
-        local data = {bignumber = -10000000000}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
-        assert.are.equal(-10000000000, decoded.bignumber)
+        local data = {id = -10000000000}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+        assert.are.equal(-10000000000, decoded.id)
     end)
 
-    it("encodes both number and bignumber", function()
-        local data = {number = 100000, bignumber = -10000000000}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
-        assert.are.equal(100000, decoded.number)
-        assert.are.equal(-10000000000, decoded.bignumber)
+    it("encodes both age and id", function()
+        local data = {age = 100000, id = -10000000000}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
+        assert.are.equal(100000, decoded.age)
+        assert.are.equal(-10000000000, decoded.id)
     end)
 end)
 
@@ -398,17 +368,14 @@ describe("big number array", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-}
-]])
+        -- schema.bin Person has: numbers 11 : *integer
+        sp = load_schema()
     end)
 
     it("encodes and decodes 64-bit integer array", function()
         local data = {numbers = {(1 << 32) + 1, (1 << 32) + 2, (1 << 32) + 3}}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
 
         assert.are.equal(3, #decoded.numbers)
         assert.are.equal((1 << 32) + 1, decoded.numbers[1])
@@ -421,28 +388,20 @@ describe("double array", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-}
-]])
+        -- schema.bin Person has: score 3 : double, values 13 : *double
+        sp = load_schema()
     end)
 
     it("encodes Go-specific double values (0.01171875, 23, 4)", function()
-        local data = {double = 0.01171875, doubles = {0.01171875, 23, 4}}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
+        local data = {score = 0.01171875, values = {0.01171875, 23, 4}}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
 
-        assert.is_near(0.01171875, decoded.double, 0.0000001)
-        assert.are.equal(3, #decoded.doubles)
-        assert.is_near(0.01171875, decoded.doubles[1], 0.0000001)
-        assert.is_near(23, decoded.doubles[2], 0.0000001)
-        assert.is_near(4, decoded.doubles[3], 0.0000001)
+        assert.is_near(0.01171875, decoded.score, 0.0000001)
+        assert.are.equal(3, #decoded.values)
+        assert.is_near(0.01171875, decoded.values[1], 0.0000001)
+        assert.is_near(23, decoded.values[2], 0.0000001)
+        assert.is_near(4, decoded.values[3], 0.0000001)
     end)
 end)
 
@@ -450,482 +409,44 @@ describe("empty arrays", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-    strings 7 : *string
-}
-]])
+        -- schema.bin Person has: numbers 11, flags 12, tags 10, values 13
+        sp = load_schema()
     end)
 
     it("encodes and decodes empty integer array", function()
         local data = {numbers = {}}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
 
         assert.is_table(decoded.numbers)
         assert.are.equal(0, #decoded.numbers)
     end)
 
     it("encodes and decodes empty double array", function()
-        local data = {doubles = {}}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
+        local data = {values = {}}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
 
-        assert.is_table(decoded.doubles)
-        assert.are.equal(0, #decoded.doubles)
+        assert.is_table(decoded.values)
+        assert.are.equal(0, #decoded.values)
     end)
 
     it("encodes and decodes empty boolean array", function()
-        local data = {bools = {}}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
+        local data = {flags = {}}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
 
-        assert.is_table(decoded.bools)
-        assert.are.equal(0, #decoded.bools)
+        assert.is_table(decoded.flags)
+        assert.are.equal(0, #decoded.flags)
     end)
 
     it("encodes and decodes empty string array", function()
-        local data = {strings = {}}
-        local encoded = sp:encode("Data", data)
-        local decoded = sp:decode("Data", encoded)
+        local data = {tags = {}}
+        local encoded = sp:encode("Person", data)
+        local decoded = sp:decode("Person", encoded)
 
-        assert.is_table(decoded.strings)
-        assert.are.equal(0, #decoded.strings)
-    end)
-end)
-
-describe("complex AddressBook encode", function()
-    local sp
-
-    before_each(function()
-        sp = sproto.parse([[
-.PhoneNumber {
-    number 0 : string
-    type 1 : integer
-}
-.Person {
-    name 0 : string
-    id 1 : integer
-    email 2 : string
-    phone 3 : *PhoneNumber
-}
-.AddressBook {
-    person 0 : *Person
-}
-]])
-    end)
-
-    it("encodes and decodes full AddressBook", function()
-        local data = {
-            person = {
-                {
-                    name = "Alice",
-                    id = 10000,
-                    phone = {
-                        {number = "123456789", type = 1},
-                        {number = "87654321", type = 2},
-                    },
-                },
-                {
-                    name = "Bob",
-                    id = 20000,
-                    phone = {
-                        {number = "01234567890", type = 3},
-                    },
-                },
-            },
-        }
-        local encoded = sp:encode("AddressBook", data)
-        local decoded = sp:decode("AddressBook", encoded)
-
-        assert.are.equal(2, #decoded.person)
-        assert.are.equal("Alice", decoded.person[1].name)
-        assert.are.equal(10000, decoded.person[1].id)
-        assert.are.equal(2, #decoded.person[1].phone)
-        assert.are.equal("123456789", decoded.person[1].phone[1].number)
-        assert.are.equal(1, decoded.person[1].phone[1].type)
-        assert.are.equal("87654321", decoded.person[1].phone[2].number)
-        assert.are.equal(2, decoded.person[1].phone[2].type)
-
-        assert.are.equal("Bob", decoded.person[2].name)
-        assert.are.equal(20000, decoded.person[2].id)
-        assert.are.equal(1, #decoded.person[2].phone)
-        assert.are.equal("01234567890", decoded.person[2].phone[1].number)
-        assert.are.equal(3, decoded.person[2].phone[1].type)
-    end)
-
-    it("AddressBook encode -> pack -> unpack -> decode", function()
-        local data = {
-            person = {
-                {
-                    name = "Alice",
-                    id = 10000,
-                    phone = {
-                        {number = "123456789", type = 1},
-                        {number = "87654321", type = 2},
-                    },
-                },
-                {
-                    name = "Bob",
-                    id = 20000,
-                    phone = {
-                        {number = "01234567890", type = 3},
-                    },
-                },
-            },
-        }
-        local encoded = sp:encode("AddressBook", data)
-        local packed = sproto.pack(encoded)
-        local unpacked = sproto.unpack(packed)
-        local decoded = sp:decode("AddressBook", unpacked)
-
-        assert.are.equal(2, #decoded.person)
-        assert.are.equal("Alice", decoded.person[1].name)
-        assert.are.equal("Bob", decoded.person[2].name)
-    end)
-end)
-
--- =============================================================================
--- Exact binary encoding tests (matching Go sproto_test.go test vectors)
--- =============================================================================
-
-describe("exact binary encoding", function()
-    it("SimpleStruct matches Go encoding", function()
-        local sp = sproto.parse([[
-.Human {
-    name 0 : string
-    age 1 : integer
-    marital 2 : boolean
-}
-]])
-        local data = {name = "Alice", age = 13, marital = false}
-        local encoded = sp:encode("Human", data)
-
-        local expected = string.char(
-            0x03, 0x00, -- fn = 3
-            0x00, 0x00, -- id = 0, value in data part
-            0x1C, 0x00, -- id = 1, value = 13
-            0x02, 0x00, -- id = 2, value = false
-            0x05, 0x00, 0x00, 0x00, -- sizeof "Alice"
-            0x41, 0x6C, 0x69, 0x63, 0x65 -- "Alice"
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("StructArray matches Go encoding", function()
-        local sp = sproto.parse([[
-.Human {
-    name 0 : string
-    age 1 : integer
-    marital 2 : boolean
-    children 3 : *Human
-}
-]])
-        local data = {
-            name = "Bob",
-            age = 40,
-            children = {
-                {name = "Alice", age = 13},
-                {name = "Carol", age = 5},
-            }
-        }
-        local encoded = sp:encode("Human", data)
-
-        local expected = string.char(
-            0x04, 0x00, -- fn = 4
-            0x00, 0x00, -- id = 0, value in data part
-            0x52, 0x00, -- id = 1, value = 40
-            0x01, 0x00, -- skip id = 2
-            0x00, 0x00, -- id = 3, value in data part
-            0x03, 0x00, 0x00, 0x00, -- sizeof "Bob"
-            0x42, 0x6F, 0x62,       -- "Bob"
-            0x26, 0x00, 0x00, 0x00, -- sizeof children
-            0x0F, 0x00, 0x00, 0x00, -- sizeof child 1
-            0x02, 0x00, -- fn = 2
-            0x00, 0x00, -- id = 0, value in data part
-            0x1C, 0x00, -- id = 1, value = 13
-            0x05, 0x00, 0x00, 0x00, -- sizeof "Alice"
-            0x41, 0x6C, 0x69, 0x63, 0x65, -- "Alice"
-            0x0F, 0x00, 0x00, 0x00, -- sizeof child 2
-            0x02, 0x00, -- fn = 2
-            0x00, 0x00, -- id = 0, value in data part
-            0x0C, 0x00, -- id = 1, value = 5
-            0x05, 0x00, 0x00, 0x00, -- sizeof "Carol"
-            0x43, 0x61, 0x72, 0x6F, 0x6C  -- "Carol"
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("NumberArray matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-}
-]])
-        local data = {numbers = {1, 2, 3, 4, 5}}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x01, 0x00, -- fn = 1
-            0x00, 0x00, -- id = 0, value in data part
-            0x15, 0x00, 0x00, 0x00, -- sizeof numbers
-            0x04,                   -- sizeof int32
-            0x01, 0x00, 0x00, 0x00, -- 1
-            0x02, 0x00, 0x00, 0x00, -- 2
-            0x03, 0x00, 0x00, 0x00, -- 3
-            0x04, 0x00, 0x00, 0x00, -- 4
-            0x05, 0x00, 0x00, 0x00  -- 5
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("BigNumberArray matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-}
-]])
-        local data = {numbers = {(1 << 32) + 1, (1 << 32) + 2, (1 << 32) + 3}}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x01, 0x00, -- fn = 1
-            0x00, 0x00, -- id = 0, value in data part
-            0x19, 0x00, 0x00, 0x00, -- sizeof numbers
-            0x08,                                           -- sizeof int64
-            0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, -- (1<<32)+1
-            0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, -- (1<<32)+2
-            0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00  -- (1<<32)+3
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("BoolArray matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-}
-]])
-        local data = {bools = {false, true, false}}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x02, 0x00, -- fn = 2
-            0x01, 0x00, -- skip id = 0
-            0x00, 0x00, -- id = 1, value in data part
-            0x03, 0x00, 0x00, 0x00, -- sizeof bools
-            0x00, -- false
-            0x01, -- true
-            0x00  -- false
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("Bytes matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-    strings 7 : *string
-    bytes 8 : binary
-}
-]])
-        local data = {bytes = string.char(0x28, 0x29, 0x30, 0x31)}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x02, 0x00, -- fn = 2
-            0x0f, 0x00, -- skip to id = 8
-            0x00, 0x00, -- id = 8, value in data part
-            0x04, 0x00, 0x00, 0x00, -- sizeof bytes
-            0x28, 0x29, 0x30, 0x31  -- bytes data
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("StringArray matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-    strings 7 : *string
-}
-]])
-        local data = {strings = {"Bob", "Alice", "Carol"}}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x02, 0x00, -- fn = 2
-            0x0d, 0x00, -- skip to id = 7
-            0x00, 0x00, -- id = 7, value in data part
-            0x19, 0x00, 0x00, 0x00, -- sizeof []string
-            0x03, 0x00, 0x00, 0x00, -- sizeof "Bob"
-            0x42, 0x6F, 0x62,       -- "Bob"
-            0x05, 0x00, 0x00, 0x00, -- sizeof "Alice"
-            0x41, 0x6C, 0x69, 0x63, 0x65, -- "Alice"
-            0x05, 0x00, 0x00, 0x00, -- sizeof "Carol"
-            0x43, 0x61, 0x72, 0x6F, 0x6C  -- "Carol"
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("Number matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-}
-]])
-        local data = {number = 100000, bignumber = -10000000000}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x03, 0x00, -- fn = 3
-            0x03, 0x00, -- skip id = 1
-            0x00, 0x00, -- id = 2, value in data part
-            0x00, 0x00, -- id = 3, value in data part
-            0x04, 0x00, 0x00, 0x00, -- sizeof number
-            0xA0, 0x86, 0x01, 0x00, -- 100000
-            0x08, 0x00, 0x00, 0x00, -- sizeof bignumber
-            0x00, 0x1C, 0xF4, 0xAB, 0xFD, 0xFF, 0xFF, 0xFF -- -10000000000
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("Double matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-}
-]])
-        local data = {double = 0.01171875, doubles = {0.01171875, 23, 4}}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x03, 0x00, -- fn = 3
-            0x07, 0x00, -- skip id = 3
-            0x00, 0x00, -- id = 4, value in data part
-            0x00, 0x00, -- id = 5, value in data part
-            0x08, 0x00, 0x00, 0x00, -- sizeof double
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0x3f, -- 0.01171875
-            0x19, 0x00, 0x00, 0x00, -- sizeof doubles
-            0x08,                                           -- sizeof double
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0x3f, -- 0.01171875
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x37, 0x40, -- 23
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x40  -- 4
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("EmptyIntSlice matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-}
-]])
-        local data = {numbers = {}}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x01, 0x00, -- fn = 1
-            0x00, 0x00, -- id = 0, value in data part
-            0x00, 0x00, 0x00, 0x00 -- sizeof numbers = 0
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("EmptyDoubleSlice matches Go encoding", function()
-        local sp = sproto.parse([[
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-}
-]])
-        local data = {doubles = {}}
-        local encoded = sp:encode("Data", data)
-
-        local expected = string.char(
-            0x02, 0x00, -- fn = 2
-            0x09, 0x00, -- skip id = 4
-            0x00, 0x00, -- id = 5, value in data part
-            0x00, 0x00, 0x00, 0x00 -- sizeof doubles = 0
-        )
-        assert.are.equal(expected, encoded)
-    end)
-
-    it("AddressBook matches Go encoding", function()
-        local sp = sproto.parse([[
-.PhoneNumber {
-    number 0 : string
-    type 1 : integer
-}
-.Person {
-    name 0 : string
-    id 1 : integer
-    email 2 : string
-    phone 3 : *PhoneNumber
-}
-.AddressBook {
-    person 0 : *Person
-}
-]])
-        local data = {
-            person = {
-                {
-                    name = "Alice",
-                    id = 10000,
-                    phone = {
-                        {number = "123456789", type = 1},
-                        {number = "87654321", type = 2},
-                    },
-                },
-                {
-                    name = "Bob",
-                    id = 20000,
-                    phone = {
-                        {number = "01234567890", type = 3},
-                    },
-                },
-            },
-        }
-        local encoded = sp:encode("AddressBook", data)
-
-        local expected = string.char(
-            1, 0, 0, 0, 122, 0, 0, 0, 68, 0, 0, 0, 4, 0, 0, 0, 34, 78, 1, 0,
-            0, 0, 5, 0, 0, 0, 65, 108, 105, 99, 101, 45, 0, 0, 0, 19, 0, 0, 0,
-            2, 0, 0, 0, 4, 0, 9, 0, 0, 0, 49, 50, 51, 52, 53, 54, 55, 56, 57,
-            18, 0, 0, 0, 2, 0, 0, 0, 6, 0, 8, 0, 0, 0, 56, 55, 54, 53, 52, 51,
-            50, 49, 46, 0, 0, 0, 4, 0, 0, 0, 66, 156, 1, 0, 0, 0, 3, 0, 0, 0,
-            66, 111, 98, 25, 0, 0, 0, 21, 0, 0, 0, 2, 0, 0, 0, 8, 0, 11, 0, 0,
-            0, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48
-        )
-        assert.are.equal(expected, encoded)
+        assert.is_table(decoded.tags)
+        assert.are.equal(0, #decoded.tags)
     end)
 end)
 
@@ -938,14 +459,13 @@ describe("cross-compatibility with C/Lua reference", function()
         local sp
 
         before_each(function()
-            local data = read_file(testdata .. "schema.bin")
-            sp = sproto.load_binary(data)
+            sp = load_schema()
         end)
 
         it("decodes simple_struct (Person: Alice)", function()
             local encoded = read_file(testdata .. "simple_struct_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.are.equal("Alice", decoded.name)
             assert.are.equal(13, decoded.age)
             assert.are.equal(false, decoded.active)
@@ -954,7 +474,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes all_scalars (Person: all scalar types)", function()
             local encoded = read_file(testdata .. "all_scalars_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.are.equal("Alice", decoded.name)
             assert.are.equal(30, decoded.age)
             assert.are.equal(true, decoded.active)
@@ -966,7 +486,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes nested_struct (Person: with phone)", function()
             local encoded = read_file(testdata .. "nested_struct_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.are.equal("Alice", decoded.name)
             assert.is_not_nil(decoded.phone)
             assert.are.equal("123456789", decoded.phone.number)
@@ -976,7 +496,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes struct_array (Person with children)", function()
             local encoded = read_file(testdata .. "struct_array_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.are.equal("Bob", decoded.name)
             assert.are.equal(40, decoded.age)
             assert.is_table(decoded.children)
@@ -990,7 +510,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes int_array (Person: integer array)", function()
             local encoded = read_file(testdata .. "int_array_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.is_table(decoded.numbers)
             assert.are.equal(5, #decoded.numbers)
             for i = 1, 5 do
@@ -1001,7 +521,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes big_int_array (Person: large integers)", function()
             local encoded = read_file(testdata .. "big_int_array_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.is_table(decoded.numbers)
             assert.are.equal(3, #decoded.numbers)
             assert.are.equal((1 << 32) + 1, decoded.numbers[1])
@@ -1012,7 +532,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes bool_array (Person: boolean array)", function()
             local encoded = read_file(testdata .. "bool_array_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.is_table(decoded.flags)
             assert.are.equal(3, #decoded.flags)
             assert.are.equal(false, decoded.flags[1])
@@ -1023,7 +543,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes number (Person: large integers)", function()
             local encoded = read_file(testdata .. "number_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.are.equal(100000, decoded.age)
             assert.are.equal(-10000000000, decoded.id)
         end)
@@ -1031,7 +551,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes double (Person: double and double array)", function()
             local encoded = read_file(testdata .. "double_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.is_near(0.01171875, decoded.score, 0.0000001)
             assert.is_table(decoded.values)
             assert.are.equal(3, #decoded.values)
@@ -1043,7 +563,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes string_array (Person: string array with UTF-8)", function()
             local encoded = read_file(testdata .. "string_array_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.is_table(decoded.tags)
             assert.are.equal(3, #decoded.tags)
             assert.are.equal("hello", decoded.tags[1])
@@ -1054,7 +574,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes fixed_point (Person: fixed point number)", function()
             local encoded = read_file(testdata .. "fixed_point_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             -- fpn is integer(2), stored as 182 (1.82 * 100)
             assert.are.equal(182, decoded.fpn)
         end)
@@ -1062,7 +582,7 @@ describe("cross-compatibility with C/Lua reference", function()
         it("decodes full (Person: all 14 fields)", function()
             local encoded = read_file(testdata .. "full_encoded.bin")
             local decoded = sp:decode("Person", encoded)
-            
+
             assert.are.equal("Alice", decoded.name)
             assert.are.equal(30, decoded.age)
             assert.are.equal(true, decoded.active)
@@ -1086,7 +606,7 @@ describe("cross-compatibility with C/Lua reference", function()
             local packed = read_file(testdata .. "simple_struct_packed.bin")
             local unpacked = sproto.unpack(packed)
             local decoded = sp:decode("Person", unpacked)
-            
+
             assert.are.equal("Alice", decoded.name)
             assert.are.equal(13, decoded.age)
         end)
@@ -1095,7 +615,7 @@ describe("cross-compatibility with C/Lua reference", function()
             local packed = read_file(testdata .. "struct_array_packed.bin")
             local unpacked = sproto.unpack(packed)
             local decoded = sp:decode("Person", unpacked)
-            
+
             assert.are.equal("Bob", decoded.name)
             assert.are.equal(2, #decoded.children)
         end)
@@ -1105,8 +625,7 @@ describe("cross-compatibility with C/Lua reference", function()
         local sp
 
         before_each(function()
-            local data = read_file(testdata .. "rpc_schema.bin")
-            sp = sproto.load_binary(data)
+            sp = load_rpc_schema()
         end)
 
         it("has package type", function()
@@ -1142,76 +661,62 @@ describe("round-trip consistency", function()
     local sp
 
     before_each(function()
-        sp = sproto.parse([[
-.Person {
-    name 0 : string
-    age 1 : integer
-    marital 2 : boolean
-    children 3 : *Person
-}
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-}
-]])
+        -- schema.bin Person has all needed fields for round-trip
+        sp = load_schema()
     end)
 
     it("Person with children round-trip", function()
         local original = {
             name = "Parent",
             age = 45,
-            marital = true,
+            active = true,
             children = {
                 {name = "Child1", age = 10},
-                {name = "Child2", age = 8, marital = false},
+                {name = "Child2", age = 8, active = false},
             }
         }
         local encoded = sp:encode("Person", original)
         local decoded = sp:decode("Person", encoded)
-        
+
         assert.are.equal(original.name, decoded.name)
         assert.are.equal(original.age, decoded.age)
-        assert.are.equal(original.marital, decoded.marital)
+        assert.are.equal(original.active, decoded.active)
         assert.are.equal(#original.children, #decoded.children)
         assert.are.equal("Child1", decoded.children[1].name)
         assert.are.equal("Child2", decoded.children[2].name)
     end)
 
-    it("Data with all fields round-trip", function()
+    it("Person with all fields round-trip", function()
         local original = {
             numbers = {100, 200, 300},
-            bools = {true, false, true},
-            number = 999999,
-            bignumber = (1 << 40),
-            double = 3.14159265358979,
-            doubles = {1.1, 2.2, 3.3}
+            flags = {true, false, true},
+            age = 999999,
+            id = (1 << 40),
+            score = 3.14159265358979,
+            values = {1.1, 2.2, 3.3}
         }
-        local encoded = sp:encode("Data", original)
-        local decoded = sp:decode("Data", encoded)
-        
+        local encoded = sp:encode("Person", original)
+        local decoded = sp:decode("Person", encoded)
+
         assert.are.same(original.numbers, decoded.numbers)
-        assert.are.same(original.bools, decoded.bools)
-        assert.are.equal(original.number, decoded.number)
-        assert.are.equal(original.bignumber, decoded.bignumber)
-        assert.is_near(original.double, decoded.double, 0.0000001)
+        assert.are.same(original.flags, decoded.flags)
+        assert.are.equal(original.age, decoded.age)
+        assert.are.equal(original.id, decoded.id)
+        assert.is_near(original.score, decoded.score, 0.0000001)
         for i = 1, 3 do
-            assert.is_near(original.doubles[i], decoded.doubles[i], 0.0000001)
+            assert.is_near(original.values[i], decoded.values[i], 0.0000001)
         end
     end)
 
     it("encode -> pack -> unpack -> decode round-trip", function()
-        local original = {name = "Test", age = 100, marital = true}
+        local original = {name = "Test", age = 100, active = true}
         local encoded = sp:encode("Person", original)
         local packed = sproto.pack(encoded)
         local unpacked = sproto.unpack(packed)
         local decoded = sp:decode("Person", unpacked)
-        
+
         assert.are.equal(original.name, decoded.name)
         assert.are.equal(original.age, decoded.age)
-        assert.are.equal(original.marital, decoded.marital)
+        assert.are.equal(original.active, decoded.active)
     end)
 end)

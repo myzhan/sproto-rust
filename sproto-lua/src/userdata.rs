@@ -1,11 +1,11 @@
 //! Lua userdata implementations for Sproto types.
 
 use mlua::prelude::*;
-use sproto::{binary_schema, parser, rpc, Sproto};
+use sproto::{binary_schema, rpc, Sproto};
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use crate::error::{decode_error_to_lua, parse_error_to_lua, rpc_error_to_lua};
+use crate::error::{decode_error_to_lua, rpc_error_to_lua};
 use crate::lua_codec;
 
 /// Wrapper for Sproto schema object.
@@ -219,15 +219,8 @@ impl LuaUserData for ResponderUserData {
     }
 }
 
-/// Parse schema text and create Sproto userdata.
-pub fn lua_parse(_lua: &Lua, schema_text: String) -> LuaResult<SprotoUserData> {
-    let sproto = parser::parse(&schema_text).map_err(parse_error_to_lua)?;
-    Ok(SprotoUserData {
-        inner: Arc::new(sproto),
-    })
-}
-
 /// Load binary schema and create Sproto userdata.
+#[allow(clippy::arc_with_non_send_sync)]
 pub fn lua_load_binary(_lua: &Lua, data: LuaString) -> LuaResult<SprotoUserData> {
     let sproto = binary_schema::load_binary(&data.as_bytes()).map_err(decode_error_to_lua)?;
     Ok(SprotoUserData {

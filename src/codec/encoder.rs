@@ -373,18 +373,6 @@ impl<'a> StructEncoder<'a> {
         Ok(())
     }
 
-    /// Record a field entry by index and tag.
-    ///
-    /// Combines `set_entry` + `track_data_order` for data entries.
-    /// Used by the serde adapter to feed results back into the encoder.
-    #[cfg(feature = "serde")]
-    pub(crate) fn record_field(&mut self, idx: usize, tag: u16, entry: FieldEntry) {
-        if matches!(entry, FieldEntry::Data { .. }) {
-            self.track_data_order(tag);
-        }
-        self.set_entry(idx, entry);
-    }
-
     /// Assemble the wire header + data and finalize the encoded bytes.
     ///
     /// Returns the output buffer so callers (e.g. nested struct serializers)
@@ -533,32 +521,41 @@ impl<'a> StructArrayEncoder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser;
+    use crate::types::{Field, FieldType};
 
     fn test_schema() -> Sproto {
-        parser::parse(
-            r#"
-            .Person {
-                name 0 : string
-                age 1 : integer
-                active 2 : boolean
-            }
-            .Data {
-                numbers 0 : *integer
-                value 1 : double
-                flags 2 : *boolean
-            }
-            .Team {
-                name 0 : string
-                members 1 : *Person
-            }
-            .Nested {
-                person 0 : Person
-                count 1 : integer
-            }
-        "#,
-        )
-        .unwrap()
+        let mut s = Sproto::new();
+        let person_idx = s.add_type(
+            "Person",
+            vec![
+                Field::new("name", 0, FieldType::String),
+                Field::new("age", 1, FieldType::Integer),
+                Field::new("active", 2, FieldType::Boolean),
+            ],
+        );
+        s.add_type(
+            "Data",
+            vec![
+                Field::array("numbers", 0, FieldType::Integer),
+                Field::new("value", 1, FieldType::Double),
+                Field::array("flags", 2, FieldType::Boolean),
+            ],
+        );
+        s.add_type(
+            "Team",
+            vec![
+                Field::new("name", 0, FieldType::String),
+                Field::array("members", 1, FieldType::Struct(person_idx)),
+            ],
+        );
+        s.add_type(
+            "Nested",
+            vec![
+                Field::new("person", 0, FieldType::Struct(person_idx)),
+                Field::new("count", 1, FieldType::Integer),
+            ],
+        );
+        s
     }
 
     #[test]

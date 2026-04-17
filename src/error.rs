@@ -1,37 +1,3 @@
-/// Errors from the sproto schema text parser.
-#[derive(Debug, thiserror::Error)]
-pub enum ParseError {
-    #[error("syntax error at line {line}: {message}")]
-    Syntax { line: usize, message: String },
-
-    #[error("duplicate tag {tag} in type '{type_name}'")]
-    DuplicateTag { type_name: String, tag: u16 },
-
-    #[error("duplicate field '{field_name}' in type '{type_name}'")]
-    DuplicateField {
-        type_name: String,
-        field_name: String,
-    },
-
-    #[error("undefined type '{type_name}' referenced by '{referenced_by}'")]
-    UndefinedType {
-        type_name: String,
-        referenced_by: String,
-    },
-
-    #[error("invalid map key: field '{field_name}' in type '{type_name}'")]
-    InvalidMapKey {
-        type_name: String,
-        field_name: String,
-    },
-
-    #[error("redefined protocol tag {tag} at '{name}'")]
-    DuplicateProtocolTag { tag: u16, name: String },
-
-    #[error("redefined type '{name}'")]
-    DuplicateType { name: String },
-}
-
 /// Errors from the binary encoder.
 #[derive(Debug, thiserror::Error)]
 pub enum EncodeError {
@@ -100,9 +66,6 @@ pub enum RpcError {
 /// Top-level error type that wraps all sub-errors.
 #[derive(Debug, thiserror::Error)]
 pub enum SprotoError {
-    #[error(transparent)]
-    Parse(#[from] ParseError),
-
     #[error(transparent)]
     Encode(#[from] EncodeError),
 

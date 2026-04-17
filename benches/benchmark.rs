@@ -1,251 +1,267 @@
 //! Benchmark for sproto encode/decode/pack/unpack operations.
 //!
-//! Supports Serde API, Derive API, and Direct API benchmarks.
-//!
 //! Usage:
 //!   cargo build --release --example benchmark
-//!   ./target/release/examples/benchmark [--count N] [--mode MODE] [--api API]
+//!   ./target/release/examples/benchmark [--count N] [--mode MODE]
 //!
 //! Modes: encode, decode, encode_pack, unpack_decode
-//! APIs:  serde      -- AddressBook + Serde (Go comparison, default)
-//!        derive     -- AddressBook + Derive (nested struct benchmark)
-//!        direct     -- AddressBook + Direct API (schema-driven, no serde)
-//!        compare    -- AddressBook + all three APIs (side-by-side comparison)
 
 use std::hint::black_box;
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
+use sproto::codec::{StructDecoder, StructEncoder};
 use sproto::pack;
-use sproto::types::SprotoType;
+use sproto::types::{Field, FieldType, SprotoType};
 use sproto::Sproto;
-use sproto::{SprotoDecode, SprotoEncode};
 
 // ============================================================================
-// Schema Definitions
+// Schema Creation
 // ============================================================================
 
-/// AddressBook schema (matching Go benchmark)
-const ADDRESSBOOK_SCHEMA: &str = r#"
-.PhoneNumber {
-    number 0 : string
-    type 1 : integer
-    real 2 : double
-}
-.Person {
-    name 0 : string
-    id 1 : integer
-    email 2 : string
-    phone 3 : *PhoneNumber
-}
-.Human {
-    name 0 : string
-    age 1 : integer
-    marital 2 : boolean
-    children 3 : *Human
-}
-.AddressBook {
-    person 0 : *Person
-    human 1 : *Human
-}
-"#;
-
-// ============================================================================
-// AddressBook Data Structures (both Serde and Derive)
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, SprotoEncode, SprotoDecode)]
-struct PhoneNumber {
-    #[sproto(tag = 0)]
-    number: String,
-    #[serde(rename = "type")]
-    #[sproto(tag = 1)]
-    phone_type: i64,
-    #[sproto(tag = 2)]
-    real: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, SprotoEncode, SprotoDecode)]
-struct Person {
-    #[sproto(tag = 0)]
-    name: String,
-    #[sproto(tag = 1)]
-    id: i64,
-    #[sproto(tag = 3)]
-    phone: Vec<PhoneNumber>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, SprotoEncode, SprotoDecode)]
-struct Human {
-    #[sproto(tag = 0)]
-    name: String,
-    #[sproto(tag = 1)]
-    age: i64,
-    #[sproto(tag = 2)]
-    marital: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[sproto(tag = 3)]
-    children: Vec<Human>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, SprotoEncode, SprotoDecode)]
-struct AddressBook {
-    #[sproto(tag = 0)]
-    person: Vec<Person>,
-    #[sproto(tag = 1)]
-    human: Vec<Human>,
-}
-
-// ============================================================================
-// Test Data Construction
-// ============================================================================
-
-fn build_addressbook() -> AddressBook {
-    AddressBook {
-        person: vec![
-            Person {
-                name: "Alice".to_string(),
-                id: 10000,
-                phone: vec![
-                    PhoneNumber {
-                        number: "123456789".to_string(),
-                        phone_type: 1,
-                        real: 1.234567,
-                    },
-                    PhoneNumber {
-                        number: "87654321".to_string(),
-                        phone_type: 2,
-                        real: 5567.12345,
-                    },
-                ],
-            },
-            Person {
-                name: "Bob".to_string(),
-                id: 20000,
-                phone: vec![PhoneNumber {
-                    number: "01234567890".to_string(),
-                    phone_type: 3,
-                    real: 567.1378,
-                }],
-            },
+fn create_addressbook_schema() -> Sproto {
+    let mut s = Sproto::new();
+    let phone_idx = s.add_type(
+        "PhoneNumber",
+        vec![
+            Field::new("number", 0, FieldType::String),
+            Field::new("type", 1, FieldType::Integer),
+            Field::new("real", 2, FieldType::Double),
         ],
-        human: vec![
-            Human {
-                name: "kkkk".to_string(),
-                age: 11,
-                marital: true,
-                children: vec![],
-            },
-            Human {
-                name: "dddd".to_string(),
-                age: 22,
-                marital: false,
-                children: vec![
-                    Human {
-                        name: "cccc".to_string(),
-                        age: 33,
-                        marital: false,
-                        children: vec![],
-                    },
-                    Human {
-                        name: "ffff".to_string(),
-                        age: 44,
-                        marital: false,
-                        children: vec![],
-                    },
-                ],
-            },
+    );
+    let person_idx = s.add_type(
+        "Person",
+        vec![
+            Field::new("name", 0, FieldType::String),
+            Field::new("id", 1, FieldType::Integer),
+            Field::new("email", 2, FieldType::String),
+            Field::array("phone", 3, FieldType::Struct(phone_idx)),
         ],
-    }
+    );
+    let human_idx = s.add_type(
+        "Human",
+        vec![
+            Field::new("name", 0, FieldType::String),
+            Field::new("age", 1, FieldType::Integer),
+            Field::new("marital", 2, FieldType::Boolean),
+            // children references Human itself (self-referential, index = 2)
+            Field::array("children", 3, FieldType::Struct(2)),
+        ],
+    );
+    let _ = human_idx;
+    s.add_type(
+        "AddressBook",
+        vec![
+            Field::array("person", 0, FieldType::Struct(person_idx)),
+            Field::array("human", 1, FieldType::Struct(human_idx)),
+        ],
+    );
+    s
 }
 
 // ============================================================================
-// Benchmark Functions - Serde API (AddressBook)
+// Encode/Decode using low-level API
 // ============================================================================
 
-fn bench_serde_ab_encode(schema: &Sproto, st: &SprotoType, ab: &AddressBook, count: usize) {
+fn encode_addressbook(schema: &Sproto, st: &SprotoType) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(512);
+    let mut enc = StructEncoder::new(schema, st, &mut buf);
+
+    // person array
+    enc.encode_struct_array(0, |arr| {
+        // Alice
+        arr.encode_element(|p| {
+            p.set_string(0, "Alice")?;
+            p.set_integer(1, 10000)?;
+            p.encode_struct_array(3, |phones| {
+                phones.encode_element(|ph| {
+                    ph.set_string(0, "123456789")?;
+                    ph.set_integer(1, 1)?;
+                    ph.set_double(2, 1.234567)?;
+                    Ok(())
+                })?;
+                phones.encode_element(|ph| {
+                    ph.set_string(0, "87654321")?;
+                    ph.set_integer(1, 2)?;
+                    ph.set_double(2, 5567.12345)?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+        // Bob
+        arr.encode_element(|p| {
+            p.set_string(0, "Bob")?;
+            p.set_integer(1, 20000)?;
+            p.encode_struct_array(3, |phones| {
+                phones.encode_element(|ph| {
+                    ph.set_string(0, "01234567890")?;
+                    ph.set_integer(1, 3)?;
+                    ph.set_double(2, 567.1378)?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+        Ok(())
+    })
+    .unwrap();
+
+    // human array
+    enc.encode_struct_array(1, |arr| {
+        // kkkk (no children)
+        arr.encode_element(|h| {
+            h.set_string(0, "kkkk")?;
+            h.set_integer(1, 11)?;
+            h.set_bool(2, true)?;
+            Ok(())
+        })?;
+        // dddd (with children)
+        arr.encode_element(|h| {
+            h.set_string(0, "dddd")?;
+            h.set_integer(1, 22)?;
+            h.set_bool(2, false)?;
+            h.encode_struct_array(3, |children| {
+                children.encode_element(|c| {
+                    c.set_string(0, "cccc")?;
+                    c.set_integer(1, 33)?;
+                    c.set_bool(2, false)?;
+                    Ok(())
+                })?;
+                children.encode_element(|c| {
+                    c.set_string(0, "ffff")?;
+                    c.set_integer(1, 44)?;
+                    c.set_bool(2, false)?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+        Ok(())
+    })
+    .unwrap();
+
+    enc.finish();
+    buf
+}
+
+fn decode_addressbook(schema: &Sproto, st: &SprotoType, data: &[u8]) -> usize {
+    let mut dec = StructDecoder::new(schema, st, data).unwrap();
+    let mut person_count = 0;
+    while let Some(f) = dec.next_field().unwrap() {
+        match f.tag() {
+            0 => {
+                // person array
+                for elem in f.as_struct_iter().unwrap() {
+                    let mut sub = elem.unwrap();
+                    while let Some(sf) = sub.next_field().unwrap() {
+                        match sf.tag() {
+                            0 => {
+                                let _ = sf.as_string().unwrap();
+                            }
+                            1 => {
+                                let _ = sf.as_integer().unwrap();
+                            }
+                            3 => {
+                                for phone in sf.as_struct_iter().unwrap() {
+                                    let mut ph = phone.unwrap();
+                                    while let Some(pf) = ph.next_field().unwrap() {
+                                        match pf.tag() {
+                                            0 => {
+                                                let _ = pf.as_string().unwrap();
+                                            }
+                                            1 => {
+                                                let _ = pf.as_integer().unwrap();
+                                            }
+                                            2 => {
+                                                let _ = pf.as_double().unwrap();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    person_count += 1;
+                }
+            }
+            1 => {
+                // human array - just iterate
+                for elem in f.as_struct_iter().unwrap() {
+                    let mut sub = elem.unwrap();
+                    while let Some(sf) = sub.next_field().unwrap() {
+                        match sf.tag() {
+                            0 => {
+                                let _ = sf.as_string().unwrap();
+                            }
+                            1 => {
+                                let _ = sf.as_integer().unwrap();
+                            }
+                            2 => {
+                                let _ = sf.as_bool().unwrap();
+                            }
+                            3 => {
+                                // children
+                                for child in sf.as_struct_iter().unwrap() {
+                                    let mut c = child.unwrap();
+                                    while let Some(cf) = c.next_field().unwrap() {
+                                        match cf.tag() {
+                                            0 => {
+                                                let _ = cf.as_string().unwrap();
+                                            }
+                                            1 => {
+                                                let _ = cf.as_integer().unwrap();
+                                            }
+                                            2 => {
+                                                let _ = cf.as_bool().unwrap();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    person_count
+}
+
+// ============================================================================
+// Benchmark Functions
+// ============================================================================
+
+fn bench_ab_encode(schema: &Sproto, st: &SprotoType, count: usize) {
     for _ in 0..count {
-        let _ = black_box(sproto::serde::to_bytes(schema, st, ab).unwrap());
+        let _ = black_box(encode_addressbook(schema, st));
     }
 }
 
-fn bench_serde_ab_decode(schema: &Sproto, st: &SprotoType, data: &[u8], count: usize) {
+fn bench_ab_decode(schema: &Sproto, st: &SprotoType, data: &[u8], count: usize) {
     for _ in 0..count {
-        let _: AddressBook = black_box(sproto::serde::from_bytes(schema, st, data).unwrap());
+        let _ = black_box(decode_addressbook(schema, st, data));
     }
 }
 
-fn bench_serde_ab_encode_pack(schema: &Sproto, st: &SprotoType, ab: &AddressBook, count: usize) {
+fn bench_ab_encode_pack(schema: &Sproto, st: &SprotoType, count: usize) {
     for _ in 0..count {
-        let encoded = sproto::serde::to_bytes(schema, st, ab).unwrap();
+        let encoded = encode_addressbook(schema, st);
         let _ = black_box(pack::pack(&encoded));
     }
 }
 
-fn bench_serde_ab_unpack_decode(schema: &Sproto, st: &SprotoType, packed: &[u8], count: usize) {
+fn bench_ab_unpack_decode(schema: &Sproto, st: &SprotoType, packed: &[u8], count: usize) {
     for _ in 0..count {
         let unpacked = pack::unpack(packed).unwrap();
-        let _: AddressBook = black_box(sproto::serde::from_bytes(schema, st, &unpacked).unwrap());
-    }
-}
-
-// ============================================================================
-// Benchmark Functions - Derive API (AddressBook)
-// ============================================================================
-
-fn bench_derive_ab_encode(ab: &AddressBook, count: usize) {
-    for _ in 0..count {
-        let _ = black_box(ab.sproto_encode().unwrap());
-    }
-}
-
-fn bench_derive_ab_decode(data: &[u8], count: usize) {
-    for _ in 0..count {
-        let _ = black_box(AddressBook::sproto_decode(data).unwrap());
-    }
-}
-
-fn bench_derive_ab_encode_pack(ab: &AddressBook, count: usize) {
-    for _ in 0..count {
-        let encoded = ab.sproto_encode().unwrap();
-        let _ = black_box(pack::pack(&encoded));
-    }
-}
-
-fn bench_derive_ab_unpack_decode(packed: &[u8], count: usize) {
-    for _ in 0..count {
-        let unpacked = pack::unpack(packed).unwrap();
-        let _ = black_box(AddressBook::sproto_decode(&unpacked).unwrap());
-    }
-}
-
-// ============================================================================
-// Benchmark Functions - Direct API (AddressBook)
-// ============================================================================
-
-fn bench_direct_ab_encode(schema: &Sproto, st: &SprotoType, ab: &AddressBook, count: usize) {
-    for _ in 0..count {
-        let _ = black_box(sproto::to_bytes(schema, st, ab).unwrap());
-    }
-}
-
-fn bench_direct_ab_decode(schema: &Sproto, st: &SprotoType, data: &[u8], count: usize) {
-    for _ in 0..count {
-        let _: AddressBook = black_box(sproto::from_bytes(schema, st, data).unwrap());
-    }
-}
-
-fn bench_direct_ab_encode_pack(schema: &Sproto, st: &SprotoType, ab: &AddressBook, count: usize) {
-    for _ in 0..count {
-        let encoded = sproto::to_bytes(schema, st, ab).unwrap();
-        let _ = black_box(pack::pack(&encoded));
-    }
-}
-
-fn bench_direct_ab_unpack_decode(schema: &Sproto, st: &SprotoType, packed: &[u8], count: usize) {
-    for _ in 0..count {
-        let unpacked = pack::unpack(packed).unwrap();
-        let _: AddressBook = black_box(sproto::from_bytes(schema, st, &unpacked).unwrap());
+        let _ = black_box(decode_addressbook(schema, st, &unpacked));
     }
 }
 
@@ -291,11 +307,6 @@ fn print_usage() {
     eprintln!("  --count N              Iteration count (default: 1000000)");
     eprintln!("  --mode MODE            Benchmark mode (default: encode_pack)");
     eprintln!("                         encode, decode, encode_pack, unpack_decode");
-    eprintln!("  --api API              API to benchmark (default: serde)");
-    eprintln!("                         serde   -- AddressBook + Serde (Go comparison)");
-    eprintln!("                         derive  -- AddressBook + Derive (nested structs)");
-    eprintln!("                         direct  -- AddressBook + Direct API (schema-driven)");
-    eprintln!("                         compare -- AddressBook + all three APIs (side-by-side)");
 }
 
 // ============================================================================
@@ -314,7 +325,6 @@ fn main() {
         .parse()
         .expect("--count must be a positive integer");
     let mode = parse_arg(&args, "--mode", "encode_pack");
-    let api = parse_arg(&args, "--api", "serde");
 
     // Validate arguments
     if !["encode", "decode", "encode_pack", "unpack_decode"].contains(&mode.as_str()) {
@@ -324,184 +334,27 @@ fn main() {
         );
         std::process::exit(1);
     }
-    if !["serde", "derive", "direct", "compare"].contains(&api.as_str()) {
-        eprintln!(
-            "Unknown --api: {}. Use: serde, derive, direct, compare",
-            api
-        );
-        std::process::exit(1);
-    }
 
-    match api.as_str() {
-        "serde" => run_serde_addressbook(&mode, count),
-        "derive" => run_derive_addressbook(&mode, count),
-        "direct" => run_direct_addressbook(&mode, count),
-        "compare" => run_compare_addressbook(&mode, count),
-        _ => unreachable!(),
-    }
-}
-
-fn run_serde_addressbook(mode: &str, count: usize) {
-    let schema = sproto::parser::parse(ADDRESSBOOK_SCHEMA).unwrap();
+    let schema = create_addressbook_schema();
     let st = schema.get_type("AddressBook").unwrap();
 
-    let ab = build_addressbook();
-    let encoded = sproto::serde::to_bytes(&schema, st, &ab).unwrap();
+    let encoded = encode_addressbook(&schema, st);
     let packed = pack::pack(&encoded);
 
-    let decoded: AddressBook = sproto::serde::from_bytes(&schema, st, &encoded).unwrap();
-    assert_eq!(
-        decoded.person.len(),
-        ab.person.len(),
-        "serde roundtrip failed"
-    );
+    let person_count = decode_addressbook(&schema, st, &encoded);
+    assert_eq!(person_count, 2, "roundtrip failed");
 
     eprintln!(
-        "AddressBook(serde): encoded {} bytes, packed {} bytes",
+        "AddressBook: encoded {} bytes, packed {} bytes",
         encoded.len(),
         packed.len()
     );
 
-    run_benchmark("serde", mode, count, || match mode {
-        "encode" => bench_serde_ab_encode(&schema, st, &ab, count),
-        "decode" => bench_serde_ab_decode(&schema, st, &encoded, count),
-        "encode_pack" => bench_serde_ab_encode_pack(&schema, st, &ab, count),
-        "unpack_decode" => bench_serde_ab_unpack_decode(&schema, st, &packed, count),
-        _ => unreachable!(),
-    });
-}
-
-fn run_derive_addressbook(mode: &str, count: usize) {
-    let ab = build_addressbook();
-    let encoded = ab.sproto_encode().unwrap();
-    let packed = pack::pack(&encoded);
-
-    let decoded = AddressBook::sproto_decode(&encoded).unwrap();
-    assert_eq!(
-        decoded.person.len(),
-        ab.person.len(),
-        "derive roundtrip failed"
-    );
-
-    eprintln!(
-        "AddressBook(derive): encoded {} bytes, packed {} bytes",
-        encoded.len(),
-        packed.len()
-    );
-
-    run_benchmark("derive", mode, count, || match mode {
-        "encode" => bench_derive_ab_encode(&ab, count),
-        "decode" => bench_derive_ab_decode(&encoded, count),
-        "encode_pack" => bench_derive_ab_encode_pack(&ab, count),
-        "unpack_decode" => bench_derive_ab_unpack_decode(&packed, count),
-        _ => unreachable!(),
-    });
-}
-
-fn run_direct_addressbook(mode: &str, count: usize) {
-    let schema = sproto::parser::parse(ADDRESSBOOK_SCHEMA).unwrap();
-    let st = schema.get_type("AddressBook").unwrap();
-    let ab = build_addressbook();
-
-    let encoded = sproto::to_bytes(&schema, st, &ab).unwrap();
-    let packed = pack::pack(&encoded);
-
-    let decoded: AddressBook = sproto::from_bytes(&schema, st, &encoded).unwrap();
-    assert_eq!(
-        decoded.person.len(),
-        ab.person.len(),
-        "direct roundtrip failed"
-    );
-
-    eprintln!(
-        "AddressBook(direct): encoded {} bytes, packed {} bytes",
-        encoded.len(),
-        packed.len()
-    );
-
-    run_benchmark("direct", mode, count, || match mode {
-        "encode" => bench_direct_ab_encode(&schema, st, &ab, count),
-        "decode" => bench_direct_ab_decode(&schema, st, &encoded, count),
-        "encode_pack" => bench_direct_ab_encode_pack(&schema, st, &ab, count),
-        "unpack_decode" => bench_direct_ab_unpack_decode(&schema, st, &packed, count),
-        _ => unreachable!(),
-    });
-}
-
-fn run_compare_addressbook(mode: &str, count: usize) {
-    let schema = sproto::parser::parse(ADDRESSBOOK_SCHEMA).unwrap();
-    let st = schema.get_type("AddressBook").unwrap();
-    let ab = build_addressbook();
-
-    // Serde path
-    let serde_encoded = sproto::serde::to_bytes(&schema, st, &ab).unwrap();
-    let serde_packed = pack::pack(&serde_encoded);
-
-    // Derive path
-    let derive_encoded = ab.sproto_encode().unwrap();
-    let derive_packed = pack::pack(&derive_encoded);
-
-    // Direct path
-    let direct_encoded = sproto::to_bytes(&schema, st, &ab).unwrap();
-    let direct_packed = pack::pack(&direct_encoded);
-
-    // Verify roundtrip for each API independently
-    let serde_decoded: AddressBook =
-        sproto::serde::from_bytes(&schema, st, &serde_encoded).unwrap();
-    assert_eq!(
-        serde_decoded.person.len(),
-        ab.person.len(),
-        "serde roundtrip failed"
-    );
-
-    let derive_decoded = AddressBook::sproto_decode(&derive_encoded).unwrap();
-    assert_eq!(
-        derive_decoded.person.len(),
-        ab.person.len(),
-        "derive roundtrip failed"
-    );
-
-    let direct_decoded: AddressBook = sproto::from_bytes(&schema, st, &direct_encoded).unwrap();
-    assert_eq!(
-        direct_decoded.person.len(),
-        ab.person.len(),
-        "direct roundtrip failed"
-    );
-
-    eprintln!(
-        "AddressBook: serde {} bytes (packed {}), derive {} bytes (packed {}), direct {} bytes (packed {})",
-        serde_encoded.len(),
-        serde_packed.len(),
-        derive_encoded.len(),
-        derive_packed.len(),
-        direct_encoded.len(),
-        direct_packed.len(),
-    );
-
-    // Run Serde benchmark
-    run_benchmark("serde", mode, count, || match mode {
-        "encode" => bench_serde_ab_encode(&schema, st, &ab, count),
-        "decode" => bench_serde_ab_decode(&schema, st, &serde_encoded, count),
-        "encode_pack" => bench_serde_ab_encode_pack(&schema, st, &ab, count),
-        "unpack_decode" => bench_serde_ab_unpack_decode(&schema, st, &serde_packed, count),
-        _ => unreachable!(),
-    });
-
-    // Run Direct benchmark
-    run_benchmark("direct", mode, count, || match mode {
-        "encode" => bench_direct_ab_encode(&schema, st, &ab, count),
-        "decode" => bench_direct_ab_decode(&schema, st, &direct_encoded, count),
-        "encode_pack" => bench_direct_ab_encode_pack(&schema, st, &ab, count),
-        "unpack_decode" => bench_direct_ab_unpack_decode(&schema, st, &direct_packed, count),
-        _ => unreachable!(),
-    });
-
-    // Run Derive benchmark
-    run_benchmark("derive", mode, count, || match mode {
-        "encode" => bench_derive_ab_encode(&ab, count),
-        "decode" => bench_derive_ab_decode(&derive_encoded, count),
-        "encode_pack" => bench_derive_ab_encode_pack(&ab, count),
-        "unpack_decode" => bench_derive_ab_unpack_decode(&derive_packed, count),
+    run_benchmark("direct", &mode, count, || match mode.as_str() {
+        "encode" => bench_ab_encode(&schema, st, count),
+        "decode" => bench_ab_decode(&schema, st, &encoded, count),
+        "encode_pack" => bench_ab_encode_pack(&schema, st, count),
+        "unpack_decode" => bench_ab_unpack_decode(&schema, st, &packed, count),
         _ => unreachable!(),
     });
 }

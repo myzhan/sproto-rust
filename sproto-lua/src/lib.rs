@@ -2,21 +2,7 @@
 //!
 //! This crate provides Lua 5.4 bindings for the sproto serialization library.
 //!
-//! # Example
-//!
-//! ```lua
-//! local sproto = require "sproto_lua"
-//!
-//! local sp = sproto.parse([[
-//! .Person {
-//!     name 0 : string
-//!     age 1 : integer
-//! }
-//! ]])
-//!
-//! local encoded = sp:encode("Person", {name = "Alice", age = 30})
-//! local decoded = sp:decode("Person", encoded)
-//! ```
+//! Schemas are loaded from binary format using `sproto.load_binary(data)`.
 
 mod error;
 mod lua_codec;
@@ -26,7 +12,7 @@ use mlua::prelude::*;
 use sproto::pack;
 
 use error::pack_error_to_lua;
-use userdata::{lua_load_binary, lua_parse};
+use userdata::lua_load_binary;
 
 /// Pack data (zero-byte compression).
 fn lua_pack(lua: &Lua, data: LuaString) -> LuaResult<LuaString> {
@@ -46,11 +32,6 @@ fn sproto_lua(lua: &Lua) -> LuaResult<LuaTable> {
     let exports = lua.create_table()?;
 
     // Global functions
-    exports.set(
-        "parse",
-        lua.create_function(|lua, schema_text: String| lua_parse(lua, schema_text))?,
-    )?;
-
     exports.set(
         "load_binary",
         lua.create_function(|lua, data: LuaString| lua_load_binary(lua, data))?,

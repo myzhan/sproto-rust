@@ -54,13 +54,6 @@ impl<'a> StructDecoder<'a> {
         })
     }
 
-    /// Hint for the remaining number of header entries.
-    #[cfg(feature = "serde")]
-    #[inline]
-    pub(crate) fn remaining_hint(&self) -> usize {
-        self.fn_count.saturating_sub(self.header_idx)
-    }
-
     /// Yield the next decoded field, or `None` when all fields are consumed.
     pub fn next_field(&mut self) -> Result<Option<DecodedField<'a>>, DecodeError> {
         let size = self.data.len();
@@ -128,13 +121,6 @@ pub struct DecodedField<'a> {
 }
 
 impl<'a> DecodedField<'a> {
-    /// The schema reference for resolving nested types.
-    #[cfg(feature = "serde")]
-    #[inline]
-    pub(crate) fn sproto(&self) -> &'a Sproto {
-        self.sproto
-    }
-
     /// The tag number of this field.
     #[inline]
     pub fn tag(&self) -> u16 {
@@ -417,32 +403,41 @@ impl<'a> Iterator for StructArrayIter<'a> {
 mod tests {
     use super::*;
     use crate::codec::encoder::StructEncoder;
-    use crate::parser;
+    use crate::types::{Field, FieldType};
 
     fn test_schema() -> Sproto {
-        parser::parse(
-            r#"
-            .Person {
-                name 0 : string
-                age 1 : integer
-                active 2 : boolean
-            }
-            .Data {
-                numbers 0 : *integer
-                value 1 : double
-                flags 2 : *boolean
-            }
-            .Team {
-                name 0 : string
-                members 1 : *Person
-            }
-            .Nested {
-                person 0 : Person
-                count 1 : integer
-            }
-        "#,
-        )
-        .unwrap()
+        let mut s = Sproto::new();
+        let person_idx = s.add_type(
+            "Person",
+            vec![
+                Field::new("name", 0, FieldType::String),
+                Field::new("age", 1, FieldType::Integer),
+                Field::new("active", 2, FieldType::Boolean),
+            ],
+        );
+        s.add_type(
+            "Data",
+            vec![
+                Field::array("numbers", 0, FieldType::Integer),
+                Field::new("value", 1, FieldType::Double),
+                Field::array("flags", 2, FieldType::Boolean),
+            ],
+        );
+        s.add_type(
+            "Team",
+            vec![
+                Field::new("name", 0, FieldType::String),
+                Field::array("members", 1, FieldType::Struct(person_idx)),
+            ],
+        );
+        s.add_type(
+            "Nested",
+            vec![
+                Field::new("person", 0, FieldType::Struct(person_idx)),
+                Field::new("count", 1, FieldType::Integer),
+            ],
+        );
+        s
     }
 
     #[test]

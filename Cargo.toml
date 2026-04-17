@@ -5,26 +5,12 @@ edition = "2021"
 description = "Rust implementation of the sproto binary serialization protocol"
 autobenches = false
 autoexamples = false
-autobins = false
-
-[[bin]]
-name = "sproto-codegen"
-path = "src/bin/sproto-codegen.rs"
-
-[features]
-default = ["derive", "serde"]
-serde = ["dep:serde"]
-derive = ["dep:sproto-derive"]
 
 [dependencies]
 thiserror = "2"
-serde = { version = "1", optional = true }
-sproto-derive = { path = "sproto-derive", optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1"
-serde = { version = "1", features = ["derive"] }
-serde_bytes = "0.11"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
@@ -41,4 +27,4 @@ lto = true
 codegen-units = 1
 
 [workspace]
-members = ["sproto-derive", "sproto-lua"]
+members = ["sproto-lua"]

@@ -10,26 +10,26 @@ sproto-rust is a pure-Rust implementation of the [sproto](https://github.com/clo
 
 ```
 src/                    Main library source
-  lib.rs                Crate root, feature gates, re-exports
-  types.rs              Core types: Sproto, SprotoType, Field, Protocol
+  lib.rs                Crate root, re-exports
+  types.rs              Core types: Sproto, SprotoType, Field, Protocol (+ Builder API)
   error.rs              Error types (thiserror)
-  derive_traits.rs      SprotoEncode / SprotoDecode trait definitions
   codec/                Low-level wire format encode/decode
-  parser/               Text schema parser (lexer → grammar → schema builder)
-  serde/                Serde integration (ser.rs, de.rs) [feature = "serde"]
+    wire.rs             Little-endian read/write primitives
+    encoder.rs          StructEncoder: tag-based struct encoding engine
+    decoder.rs          StructDecoder: tag-based struct decoding engine
   pack.rs               Zero-packing compression
   binary_schema.rs      Binary schema loader (C toolchain compat)
   rpc/                  RPC request/response dispatch with session tracking
-sproto-derive/          Proc-macro crate (must be a separate crate)
-  src/encode.rs         SprotoEncode derive code generation
-  src/decode.rs         SprotoDecode derive code generation
-  src/attr.rs           #[sproto(...)] attribute parsing
 sproto-lua/             Lua FFI binding (cdylib, independent crate)
 tests/                  Integration tests
+  direct_tests.rs       StructEncoder/StructDecoder encode/decode (with C binary comparison)
+  pack_tests.rs         Pack/unpack with C-generated fixtures
+  binary_schema_tests.rs  Load C-generated binary schemas
+  rpc_tests.rs          RPC dispatch and session management
   testdata/             C/Lua-generated binary fixture files (.bin)
     generate.lua        Lua script to regenerate fixtures
     build.sh            Build script (requires Lua 5.3+ and C sproto)
-benches/              Performance benchmarks
+benches/                Performance benchmarks
   sproto_bench.rs       Criterion micro-benchmarks (cargo bench)
   benchmark.rs          Cross-language comparison (cargo example)
   benchall.sh           Automated Rust vs Go benchmark runner
@@ -43,11 +43,11 @@ docs/                   Project documentation
 cargo build                      # dev build
 cargo build --release            # release build
 
-# Test (always use --all-features to cover serde + derive)
-cargo test --all-features
+# Test (run all workspace tests)
+cargo test --workspace
 
 # Lint & format
-cargo clippy --all-features -- -D warnings
+cargo clippy --workspace -- -D warnings
 cargo fmt -- --check
 
 # Full CI check (format + lint + test)
@@ -55,17 +55,21 @@ make ci
 
 # Benchmarks
 cargo bench --bench sproto_bench            # criterion benchmarks
-bash benches/benchall.sh [COUNT]          # Rust vs Go comparison
+bash benches/benchall.sh [COUNT]            # Rust vs Go comparison
 ```
 
-## Feature Flags
+## API
 
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `derive` | Derive macros (`SprotoEncode`, `SprotoDecode`) | Yes |
-| `serde` | Serde integration (`to_bytes`, `from_bytes`) | Yes (via derive) |
+The library provides a runtime **Direct API** for encoding/decoding:
 
-The `derive` feature implies `serde`. Core-only build: `default-features = false`.
+- `StructEncoder` / `StructDecoder` for tag-based field-by-field encoding/decoding
+- Builder API: `Sproto::new()`, `Sproto::add_type()`, `Sproto::add_protocol()` for programmatic schema construction
+- `Field::new()` / `Field::array()` / `Field::decimal()` for field definitions
+- Binary schema loading via `binary_schema::load_binary()`
+- `pack::pack()` / `pack::unpack()` for zero-packing compression
+- RPC module: `Host`, `RequestSender`, `Responder` for RPC dispatch
+
+No feature flags. No derive macros. No serde integration.
 
 ## Coding Conventions
 
@@ -75,7 +79,6 @@ The `derive` feature implies `serde`. Core-only build: `default-features = false
 - No `unsafe` code in the main crate
 - Error types use `thiserror` derive
 - Avoid unnecessary allocations; prefer `extend_from_slice` over intermediate `Vec` temp buffers
-- The derive-generated encode uses a single shared buffer pattern (`sproto_encode_to(&self, buf: &mut Vec<u8>)`) to avoid per-struct allocations in nested encoding
 
 ### Sproto Wire Format Key Points
 
@@ -87,64 +90,45 @@ The `derive` feature implies `serde`. Core-only build: `default-features = false
 - Boolean: always inline (0 or 1)
 - Double: always 8 bytes in data section
 
-### Derive Macros
-
-- `#[sproto(tag = N)]` is required on every non-skipped field
-- `#[sproto(skip)]` excludes a field (must impl `Default`)
-- `#[sproto(default)]` uses `Default::default()` when field is missing during decode
-- Tag gaps are handled correctly (skip descriptors in header)
-- Supported field types: `i64`, `bool`, `f64`, `String`, `Vec<u8>` (binary), `Vec<T>`, `Option<T>`, nested structs, `Vec<Struct>`, recursive structs
-
 ### Test Organization
 
-- `tests/decode_tests.rs` — Decode C-generated binaries, verify field values
-- `tests/encode_tests.rs` — Encode in Rust, compare bytes with C-generated binaries
+- `tests/direct_tests.rs` — StructEncoder/StructDecoder encode/decode, C binary comparison
 - `tests/pack_tests.rs` — Pack/unpack with C-generated fixtures
 - `tests/binary_schema_tests.rs` — Load C-generated binary schemas
-- `tests/derive_tests.rs` — Derive macro encode/decode (including nested structs)
-- `tests/roundtrip_tests.rs` — Self-consistency: `decode(encode(x)) == x`
-- `tests/compatibility_tests.rs` — Cross-version forward/backward compatibility
 - `tests/rpc_tests.rs` — RPC dispatch and session management
 
 Binary fixtures in `tests/testdata/` are generated by `generate.lua` using the C/Lua reference implementation. Regenerate with `cd tests/testdata && bash build.sh`.
 
 ## Architecture Decisions
 
-### Two Encoding APIs
-
-1. **Serde API** — Schema-driven, runtime field lookup by name. Standard serde traits. Requires `Sproto` schema object at runtime.
-2. **Derive API** — Compile-time code generation, zero runtime overhead. Uses `#[sproto(tag = N)]` attributes. No schema needed at runtime. Faster for decode, competitive for encode.
-
-Both produce wire-compatible output for the same data.
-
-### Proc-Macro Crate Separation
-
-`sproto-derive/` must be a separate crate because Rust requires proc-macro crates to be standalone. The main `sproto` crate re-exports the derive macros when `feature = "derive"` is enabled.
-
 ### Encode Optimization
 
-The `SprotoEncode` trait has two methods:
-- `sproto_encode_to(&self, buf: &mut Vec<u8>)` — Required. Appends encoded bytes to shared buffer.
-- `sproto_encode(&self) -> Result<Vec<u8>>` — Default impl, creates new Vec and calls `encode_to`.
+`StructEncoder` uses a single shared output buffer pattern. Small structs (<= 32 fields) use a stack-allocated `[Option<FieldEntry>; 32]` array to avoid heap allocation. Data section write order is tracked for in-place compaction.
 
 Nested struct encoding writes a length placeholder, encodes the child struct into the same buffer, then backfills the length. This eliminates all intermediate allocations.
+
+### Field Lookup Optimization
+
+`SprotoType` stores fields sorted by tag and computes `base_tag` and `maxn`:
+- Contiguous tags: O(1) direct index `fields[tag - base_tag]`
+- Non-contiguous: binary search fallback
+- Name lookup: linear scan for <= 8 fields, `HashMap` for larger types
 
 ## Common Tasks
 
 ### Adding a New Field Type
 
-1. Add variant to `FieldTypeInfo` enum in both `sproto-derive/src/encode.rs` and `decode.rs`
-2. Add encoding logic in `generate_scalar_encode` / `generate_array_encode`
-3. Add decoding logic in `generate_scalar_decode` / `generate_array_decode`
-4. Add tests in `tests/derive_tests.rs`
+1. Add variant to `FieldType` enum in `src/types.rs`
+2. Add `set_*` encoding method in `src/codec/encoder.rs`
+3. Add `as_*` decoding method in `src/codec/decoder.rs`
+4. Add tests in `tests/direct_tests.rs`
 
 ### Modifying the Wire Format
 
 1. Update `src/codec/wire.rs`
-2. Update serde `ser.rs` and `de.rs`
-3. Update derive `encode.rs` and `decode.rs`
-4. Regenerate test fixtures: `cd tests/testdata && bash build.sh`
-5. Run full test suite: `cargo test --all-features`
+2. Update encoder.rs and decoder.rs
+3. Regenerate test fixtures: `cd tests/testdata && bash build.sh`
+4. Run full test suite: `cargo test --workspace`
 
 ### Adding RPC Features
 

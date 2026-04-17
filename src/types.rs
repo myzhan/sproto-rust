@@ -34,6 +34,47 @@ pub struct Field {
     pub decimal_precision: u32,
 }
 
+impl Field {
+    /// Create a scalar field with the given name, tag, and type.
+    pub fn new(name: &str, tag: u16, field_type: FieldType) -> Self {
+        Field {
+            name: name.into(),
+            tag,
+            field_type,
+            is_array: false,
+            key_tag: -1,
+            is_map: false,
+            decimal_precision: 0,
+        }
+    }
+
+    /// Create an array field with the given name, tag, and element type.
+    pub fn array(name: &str, tag: u16, field_type: FieldType) -> Self {
+        Field {
+            name: name.into(),
+            tag,
+            field_type,
+            is_array: true,
+            key_tag: -1,
+            is_map: false,
+            decimal_precision: 0,
+        }
+    }
+
+    /// Create a fixed-point decimal field: `integer(N)` with precision 10^N.
+    pub fn decimal(name: &str, tag: u16, precision: u32) -> Self {
+        Field {
+            name: name.into(),
+            tag,
+            field_type: FieldType::Integer,
+            is_array: false,
+            key_tag: -1,
+            is_map: false,
+            decimal_precision: precision,
+        }
+    }
+}
+
 /// A user-defined type (struct/message) in the sproto schema.
 #[derive(Debug, Clone)]
 pub struct SprotoType {
@@ -82,13 +123,15 @@ pub struct Sproto {
 }
 
 impl SprotoType {
-    /// Create a new SprotoType, automatically building the field_by_name index.
-    pub fn new(name: String, fields: Vec<Field>, base_tag: i32, maxn: usize) -> Self {
+    /// Create a new SprotoType. Fields must be sorted by tag.
+    /// Automatically computes `base_tag` and `maxn` from the fields.
+    pub fn new(name: String, fields: Vec<Field>) -> Self {
         let field_by_name: HashMap<Rc<str>, usize> = fields
             .iter()
             .enumerate()
             .map(|(i, f)| (Rc::clone(&f.name), i))
             .collect();
+        let (base_tag, maxn) = compute_base_tag_and_maxn(&fields);
         SprotoType {
             name,
             fields,
@@ -192,10 +235,72 @@ impl Sproto {
             .get(&tag)
             .map(|&idx| &self.protocols[idx])
     }
+
+    /// Add a type to the schema. Fields must be sorted by tag.
+    /// Returns the index of the newly added type (for use in `FieldType::Struct`).
+    pub fn add_type(&mut self, name: &str, fields: Vec<Field>) -> usize {
+        let idx = self.types_list.len();
+        self.types_by_name.insert(name.to_string(), idx);
+        self.types_list
+            .push(SprotoType::new(name.to_string(), fields));
+        idx
+    }
+
+    /// Add a protocol to the schema.
+    /// Returns the index of the newly added protocol.
+    pub fn add_protocol(
+        &mut self,
+        name: &str,
+        tag: u16,
+        request: Option<usize>,
+        response: Option<usize>,
+        confirm: bool,
+    ) -> usize {
+        let idx = self.protocols.len();
+        self.protocols_by_name.insert(name.to_string(), idx);
+        self.protocols_by_tag.insert(tag, idx);
+        self.protocols.push(Protocol {
+            name: name.to_string(),
+            tag,
+            request,
+            response,
+            confirm,
+        });
+        idx
+    }
 }
 
 impl Default for Sproto {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Compute base_tag and maxn from a sorted list of fields.
+///
+/// - `base_tag`: If tags are contiguous (e.g. 0,1,2,3), returns the first tag
+///   for direct indexing. Otherwise returns -1 (use binary search).
+/// - `maxn`: The number of header slots needed, including skip entries for gaps.
+pub(crate) fn compute_base_tag_and_maxn(fields: &[Field]) -> (i32, usize) {
+    if fields.is_empty() {
+        return (-1, 0);
+    }
+
+    let n = fields.len();
+    let mut maxn = n;
+    let mut last: i32 = -1;
+
+    for f in fields {
+        let tag = f.tag as i32;
+        if tag > last + 1 {
+            maxn += 1;
+        }
+        last = tag;
+    }
+
+    let base = fields[0].tag as i32;
+    let span = fields[n - 1].tag as i32 - base + 1;
+    let base_tag = if span as usize != n { -1 } else { base };
+
+    (base_tag, maxn)
 }

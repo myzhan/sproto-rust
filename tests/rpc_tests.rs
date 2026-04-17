@@ -6,281 +6,99 @@
 //! - Request-response round-trip
 //! - Various protocol configurations (with/without request/response types)
 
-use serde::{Deserialize, Serialize};
+use sproto::codec::{StructDecoder, StructEncoder};
 use sproto::rpc::{DispatchResult, Host};
-use sproto::types::{Field, FieldType, Protocol, Sproto, SprotoType};
-use std::collections::HashMap;
+use sproto::types::{Field, FieldType, Sproto};
 
-/// Create a test RPC schema programmatically (without external files).
+/// Create a test RPC schema programmatically.
 fn create_rpc_schema() -> Sproto {
-    // login_request type
-    let login_request = SprotoType::new(
-        "login_request".to_string(),
+    let mut s = Sproto::new();
+
+    let login_req_idx = s.add_type(
+        "login_request",
         vec![
-            Field {
-                name: "username".into(),
-                tag: 0,
-                field_type: FieldType::String,
-                is_array: false,
-                key_tag: -1,
-                is_map: false,
-                decimal_precision: 0,
-            },
-            Field {
-                name: "password".into(),
-                tag: 1,
-                field_type: FieldType::String,
-                is_array: false,
-                key_tag: -1,
-                is_map: false,
-                decimal_precision: 0,
-            },
+            Field::new("username", 0, FieldType::String),
+            Field::new("password", 1, FieldType::String),
         ],
-        0,
-        2,
     );
-
-    // login_response type
-    let login_response = SprotoType::new(
-        "login_response".to_string(),
+    let login_resp_idx = s.add_type(
+        "login_response",
         vec![
-            Field {
-                name: "ok".into(),
-                tag: 0,
-                field_type: FieldType::Boolean,
-                is_array: false,
-                key_tag: -1,
-                is_map: false,
-                decimal_precision: 0,
-            },
-            Field {
-                name: "user_id".into(),
-                tag: 1,
-                field_type: FieldType::Integer,
-                is_array: false,
-                key_tag: -1,
-                is_map: false,
-                decimal_precision: 0,
-            },
-            Field {
-                name: "message".into(),
-                tag: 2,
-                field_type: FieldType::String,
-                is_array: false,
-                key_tag: -1,
-                is_map: false,
-                decimal_precision: 0,
-            },
+            Field::new("ok", 0, FieldType::Boolean),
+            Field::new("user_id", 1, FieldType::Integer),
+            Field::new("message", 2, FieldType::String),
         ],
-        0,
-        3,
+    );
+    let ping_resp_idx = s.add_type(
+        "ping_response",
+        vec![Field::new("time", 0, FieldType::Integer)],
+    );
+    let echo_req_idx = s.add_type(
+        "echo_request",
+        vec![Field::new("data", 0, FieldType::String)],
+    );
+    let echo_resp_idx = s.add_type(
+        "echo_response",
+        vec![Field::new("data", 0, FieldType::String)],
     );
 
-    // ping_response type
-    let ping_response = SprotoType::new(
-        "ping_response".to_string(),
-        vec![Field {
-            name: "time".into(),
-            tag: 0,
-            field_type: FieldType::Integer,
-            is_array: false,
-            key_tag: -1,
-            is_map: false,
-            decimal_precision: 0,
-        }],
-        0,
-        1,
-    );
+    s.add_protocol("login", 1, Some(login_req_idx), Some(login_resp_idx), false);
+    s.add_protocol("ping", 2, None, Some(ping_resp_idx), false);
+    s.add_protocol("logout", 3, None, None, true);
+    s.add_protocol("notify", 4, None, None, false);
+    s.add_protocol("echo", 5, Some(echo_req_idx), Some(echo_resp_idx), false);
 
-    // echo_request type
-    let echo_request = SprotoType::new(
-        "echo_request".to_string(),
-        vec![Field {
-            name: "data".into(),
-            tag: 0,
-            field_type: FieldType::String,
-            is_array: false,
-            key_tag: -1,
-            is_map: false,
-            decimal_precision: 0,
-        }],
-        0,
-        1,
-    );
+    s
+}
 
-    // echo_response type
-    let echo_response = SprotoType::new(
-        "echo_response".to_string(),
-        vec![Field {
-            name: "data".into(),
-            tag: 0,
-            field_type: FieldType::String,
-            is_array: false,
-            key_tag: -1,
-            is_map: false,
-            decimal_precision: 0,
-        }],
-        0,
-        1,
-    );
+/// Encode a struct using StructEncoder with a closure.
+fn encode_struct(
+    sproto: &Sproto,
+    type_name: &str,
+    f: impl FnOnce(&mut StructEncoder) -> Result<(), sproto::error::EncodeError>,
+) -> Vec<u8> {
+    let st = sproto.get_type(type_name).unwrap();
+    let mut buf = Vec::new();
+    let mut enc = StructEncoder::new(sproto, st, &mut buf);
+    f(&mut enc).unwrap();
+    enc.finish();
+    buf
+}
 
-    let mut types_by_name = HashMap::new();
-    types_by_name.insert("login_request".to_string(), 0);
-    types_by_name.insert("login_response".to_string(), 1);
-    types_by_name.insert("ping_response".to_string(), 2);
-    types_by_name.insert("echo_request".to_string(), 3);
-    types_by_name.insert("echo_response".to_string(), 4);
-
-    // Protocols
-    let login_proto = Protocol {
-        name: "login".into(),
-        tag: 1,
-        request: Some(0),  // login_request
-        response: Some(1), // login_response
-        confirm: false,
-    };
-
-    let ping_proto = Protocol {
-        name: "ping".into(),
-        tag: 2,
-        request: None,     // no request body
-        response: Some(2), // ping_response
-        confirm: false,
-    };
-
-    let logout_proto = Protocol {
-        name: "logout".into(),
-        tag: 3,
-        request: None,
-        response: None, // no response (confirm)
-        confirm: true,
-    };
-
-    let notify_proto = Protocol {
-        name: "notify".into(),
-        tag: 4,
-        request: None,
-        response: None, // one-way notification
-        confirm: false,
-    };
-
-    let echo_proto = Protocol {
-        name: "echo".into(),
-        tag: 5,
-        request: Some(3),  // echo_request
-        response: Some(4), // echo_response
-        confirm: false,
-    };
-
-    let mut protocols_by_name = HashMap::new();
-    protocols_by_name.insert("login".to_string(), 0);
-    protocols_by_name.insert("ping".to_string(), 1);
-    protocols_by_name.insert("logout".to_string(), 2);
-    protocols_by_name.insert("notify".to_string(), 3);
-    protocols_by_name.insert("echo".to_string(), 4);
-
-    let mut protocols_by_tag = HashMap::new();
-    protocols_by_tag.insert(1, 0);
-    protocols_by_tag.insert(2, 1);
-    protocols_by_tag.insert(3, 2);
-    protocols_by_tag.insert(4, 3);
-    protocols_by_tag.insert(5, 4);
-
-    Sproto {
-        types_list: vec![
-            login_request,
-            login_response,
-            ping_response,
-            echo_request,
-            echo_response,
-        ],
-        types_by_name,
-        protocols: vec![
-            login_proto,
-            ping_proto,
-            logout_proto,
-            notify_proto,
-            echo_proto,
-        ],
-        protocols_by_name,
-        protocols_by_tag,
+/// Decode a string field by tag from raw bytes.
+fn decode_string(sproto: &Sproto, type_name: &str, data: &[u8], tag: u16) -> Option<String> {
+    let st = sproto.get_type(type_name).unwrap();
+    let mut dec = StructDecoder::new(sproto, st, data).unwrap();
+    while let Some(f) = dec.next_field().unwrap() {
+        if f.tag() == tag {
+            return Some(f.as_string().unwrap().to_owned());
+        }
     }
+    None
 }
 
-// Serde helpers for encoding/decoding request/response bodies
-fn encode_body<T: Serialize>(sproto: &Sproto, type_name: &str, value: &T) -> Vec<u8> {
+/// Decode an integer field by tag from raw bytes.
+fn decode_integer(sproto: &Sproto, type_name: &str, data: &[u8], tag: u16) -> Option<i64> {
     let st = sproto.get_type(type_name).unwrap();
-    sproto::serde::to_bytes(sproto, st, value).unwrap()
+    let mut dec = StructDecoder::new(sproto, st, data).unwrap();
+    while let Some(f) = dec.next_field().unwrap() {
+        if f.tag() == tag {
+            return Some(f.as_integer().unwrap());
+        }
+    }
+    None
 }
 
-fn decode_body<T: for<'de> Deserialize<'de>>(sproto: &Sproto, type_name: &str, data: &[u8]) -> T {
+/// Decode a bool field by tag from raw bytes.
+fn decode_bool(sproto: &Sproto, type_name: &str, data: &[u8], tag: u16) -> Option<bool> {
     let st = sproto.get_type(type_name).unwrap();
-    sproto::serde::from_bytes(sproto, st, data).unwrap()
-}
-
-// Serde structs for the RPC test schema
-#[derive(Debug, Serialize)]
-struct LoginRequest {
-    username: String,
-    password: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct LoginRequestDec {
-    #[serde(default)]
-    username: Option<String>,
-    #[serde(default)]
-    password: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct LoginResponse {
-    ok: bool,
-    user_id: i64,
-    message: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct LoginResponseDec {
-    #[serde(default)]
-    ok: Option<bool>,
-    #[serde(default)]
-    user_id: Option<i64>,
-    #[serde(default)]
-    message: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct EchoRequest {
-    data: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct EchoRequestDec {
-    #[serde(default)]
-    data: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct EchoResponse {
-    data: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct EchoResponseDec {
-    #[serde(default)]
-    data: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct PingResponse {
-    time: i64,
-}
-
-#[derive(Debug, Deserialize)]
-struct PingResponseDec {
-    #[serde(default)]
-    time: Option<i64>,
+    let mut dec = StructDecoder::new(sproto, st, data).unwrap();
+    while let Some(f) = dec.next_field().unwrap() {
+        if f.tag() == tag {
+            return Some(f.as_bool().unwrap());
+        }
+    }
+    None
 }
 
 // ============================================================================
@@ -304,14 +122,11 @@ fn test_rpc_roundtrip_with_request_response() {
     let mut client_sender = server_host.attach(sproto.clone());
 
     // Client encodes and sends login request
-    let request_body = encode_body(
-        &sproto,
-        "login_request",
-        &LoginRequest {
-            username: "alice".into(),
-            password: "secret123".into(),
-        },
-    );
+    let request_body = encode_struct(&sproto, "login_request", |enc| {
+        enc.set_string(0, "alice")?;
+        enc.set_string(1, "secret123")?;
+        Ok(())
+    });
     let request_packet = client_sender
         .request("login", &request_body, Some(1001), None)
         .unwrap();
@@ -328,22 +143,24 @@ fn test_rpc_roundtrip_with_request_response() {
             ud,
         } => {
             assert_eq!(name, "login");
-            let req: LoginRequestDec = decode_body(&sproto, "login_request", &body);
-            assert_eq!(req.username.as_deref(), Some("alice"));
-            assert_eq!(req.password.as_deref(), Some("secret123"));
+            assert_eq!(
+                decode_string(&sproto, "login_request", &body, 0).as_deref(),
+                Some("alice")
+            );
+            assert_eq!(
+                decode_string(&sproto, "login_request", &body, 1).as_deref(),
+                Some("secret123")
+            );
             assert!(responder.is_some());
             assert!(ud.is_none());
 
             // Server encodes and sends response
-            let response_body = encode_body(
-                &sproto,
-                "login_response",
-                &LoginResponse {
-                    ok: true,
-                    user_id: 12345,
-                    message: "Welcome!".into(),
-                },
-            );
+            let response_body = encode_struct(&sproto, "login_response", |enc| {
+                enc.set_bool(0, true)?;
+                enc.set_integer(1, 12345)?;
+                enc.set_string(2, "Welcome!")?;
+                Ok(())
+            });
             let response_packet = responder.unwrap().respond(&response_body, None).unwrap();
 
             // Client receives response
@@ -355,10 +172,15 @@ fn test_rpc_roundtrip_with_request_response() {
                 DispatchResult::Response { session, body, ud } => {
                     assert_eq!(session, 1001);
                     assert!(ud.is_none());
-                    let resp: LoginResponseDec = decode_body(&sproto, "login_response", &body);
-                    assert_eq!(resp.ok, Some(true));
-                    assert_eq!(resp.user_id, Some(12345));
-                    assert_eq!(resp.message.as_deref(), Some("Welcome!"));
+                    assert_eq!(decode_bool(&sproto, "login_response", &body, 0), Some(true));
+                    assert_eq!(
+                        decode_integer(&sproto, "login_response", &body, 1),
+                        Some(12345)
+                    );
+                    assert_eq!(
+                        decode_string(&sproto, "login_response", &body, 2).as_deref(),
+                        Some("Welcome!")
+                    );
                 }
                 _ => panic!("expected Response"),
             }
@@ -390,8 +212,10 @@ fn test_rpc_roundtrip_no_request_body() {
             assert!(responder.is_some());
 
             // Server sends response
-            let response_body =
-                encode_body(&sproto, "ping_response", &PingResponse { time: 1234567890 });
+            let response_body = encode_struct(&sproto, "ping_response", |enc| {
+                enc.set_integer(0, 1234567890)?;
+                Ok(())
+            });
             let response_packet = responder.unwrap().respond(&response_body, None).unwrap();
 
             // Client receives response
@@ -402,8 +226,10 @@ fn test_rpc_roundtrip_no_request_body() {
             match response_result {
                 DispatchResult::Response { session, body, .. } => {
                     assert_eq!(session, 2001);
-                    let resp: PingResponseDec = decode_body(&sproto, "ping_response", &body);
-                    assert_eq!(resp.time, Some(1234567890));
+                    assert_eq!(
+                        decode_integer(&sproto, "ping_response", &body, 0),
+                        Some(1234567890)
+                    );
                 }
                 _ => panic!("expected Response"),
             }
@@ -419,13 +245,10 @@ fn test_rpc_roundtrip_with_user_data() {
     let mut client_sender = server_host.attach(sproto.clone());
 
     // Client sends request with user data
-    let request_body = encode_body(
-        &sproto,
-        "echo_request",
-        &EchoRequest {
-            data: "test echo".into(),
-        },
-    );
+    let request_body = encode_struct(&sproto, "echo_request", |enc| {
+        enc.set_string(0, "test echo")?;
+        Ok(())
+    });
     let request_packet = client_sender
         .request("echo", &request_body, Some(3001), Some(42))
         .unwrap();
@@ -442,18 +265,17 @@ fn test_rpc_roundtrip_with_user_data() {
             ud,
         } => {
             assert_eq!(name, "echo");
-            let req: EchoRequestDec = decode_body(&sproto, "echo_request", &body);
-            assert_eq!(req.data.as_deref(), Some("test echo"));
+            assert_eq!(
+                decode_string(&sproto, "echo_request", &body, 0).as_deref(),
+                Some("test echo")
+            );
             assert_eq!(ud, Some(42));
 
             // Server sends response with user data
-            let response_body = encode_body(
-                &sproto,
-                "echo_response",
-                &EchoResponse {
-                    data: "echo: test echo".into(),
-                },
-            );
+            let response_body = encode_struct(&sproto, "echo_response", |enc| {
+                enc.set_string(0, "echo: test echo")?;
+                Ok(())
+            });
             let response_packet = responder
                 .unwrap()
                 .respond(&response_body, Some(99))
@@ -468,8 +290,10 @@ fn test_rpc_roundtrip_with_user_data() {
                 DispatchResult::Response { session, body, ud } => {
                     assert_eq!(session, 3001);
                     assert_eq!(ud, Some(99));
-                    let resp: EchoResponseDec = decode_body(&sproto, "echo_response", &body);
-                    assert_eq!(resp.data.as_deref(), Some("echo: test echo"));
+                    assert_eq!(
+                        decode_string(&sproto, "echo_response", &body, 0).as_deref(),
+                        Some("echo: test echo")
+                    );
                 }
                 _ => panic!("expected Response"),
             }
@@ -485,27 +309,18 @@ fn test_rpc_multiple_concurrent_sessions() {
     let mut client_sender = server_host.attach(sproto.clone());
 
     // Send multiple requests
-    let body1 = encode_body(
-        &sproto,
-        "echo_request",
-        &EchoRequest {
-            data: "first".into(),
-        },
-    );
-    let body2 = encode_body(
-        &sproto,
-        "echo_request",
-        &EchoRequest {
-            data: "second".into(),
-        },
-    );
-    let body3 = encode_body(
-        &sproto,
-        "echo_request",
-        &EchoRequest {
-            data: "third".into(),
-        },
-    );
+    let body1 = encode_struct(&sproto, "echo_request", |enc| {
+        enc.set_string(0, "first")?;
+        Ok(())
+    });
+    let body2 = encode_struct(&sproto, "echo_request", |enc| {
+        enc.set_string(0, "second")?;
+        Ok(())
+    });
+    let body3 = encode_struct(&sproto, "echo_request", |enc| {
+        enc.set_string(0, "third")?;
+        Ok(())
+    });
 
     let req1 = client_sender
         .request("echo", &body1, Some(1), None)
@@ -532,8 +347,10 @@ fn test_rpc_multiple_concurrent_sessions() {
         match result {
             DispatchResult::Request { name, body, .. } => {
                 assert_eq!(name, "echo");
-                let req: EchoRequestDec = decode_body(&sproto, "echo_request", &body);
-                assert_eq!(req.data.as_deref(), Some(expected_data));
+                assert_eq!(
+                    decode_string(&sproto, "echo_request", &body, 0).as_deref(),
+                    Some(expected_data)
+                );
             }
             _ => panic!("expected Request"),
         }
@@ -584,13 +401,10 @@ fn test_rpc_response_unknown_session() {
     let mut client_sender = server_host.attach(sproto.clone());
 
     // Send a request
-    let request_body = encode_body(
-        &sproto,
-        "echo_request",
-        &EchoRequest {
-            data: "test".into(),
-        },
-    );
+    let request_body = encode_struct(&sproto, "echo_request", |enc| {
+        enc.set_string(0, "test")?;
+        Ok(())
+    });
     let request_packet = client_sender
         .request("echo", &request_body, Some(9999), None)
         .unwrap();
@@ -603,13 +417,10 @@ fn test_rpc_response_unknown_session() {
 
     match dispatch_result {
         DispatchResult::Request { responder, .. } => {
-            let response_body = encode_body(
-                &sproto,
-                "echo_response",
-                &EchoResponse {
-                    data: "resp".into(),
-                },
-            );
+            let response_body = encode_struct(&sproto, "echo_response", |enc| {
+                enc.set_string(0, "resp")?;
+                Ok(())
+            });
             let response_packet = responder.unwrap().respond(&response_body, None).unwrap();
 
             // Try to dispatch response with wrong session registered
@@ -682,13 +493,10 @@ fn test_rpc_large_session_id() {
     let mut client_sender = server_host.attach(sproto.clone());
 
     let large_session = u64::MAX / 2;
-    let request_body = encode_body(
-        &sproto,
-        "echo_request",
-        &EchoRequest {
-            data: "large session".into(),
-        },
-    );
+    let request_body = encode_struct(&sproto, "echo_request", |enc| {
+        enc.set_string(0, "large session")?;
+        Ok(())
+    });
     let request_packet = client_sender
         .request("echo", &request_body, Some(large_session), None)
         .unwrap();
@@ -698,13 +506,10 @@ fn test_rpc_large_session_id() {
 
     match dispatch_result {
         DispatchResult::Request { responder, .. } => {
-            let response_body = encode_body(
-                &sproto,
-                "echo_response",
-                &EchoResponse {
-                    data: "resp".into(),
-                },
-            );
+            let response_body = encode_struct(&sproto, "echo_response", |enc| {
+                enc.set_string(0, "resp")?;
+                Ok(())
+            });
             let response_packet = responder.unwrap().respond(&response_body, None).unwrap();
 
             let mut client_host = Host::new(sproto.clone());
@@ -728,14 +533,11 @@ fn test_rpc_unicode_in_request() {
     let mut server_host = Host::new(sproto.clone());
     let mut client_sender = server_host.attach(sproto.clone());
 
-    let unicode_data = "Hello 世界! 🎉 Привет мир!";
-    let request_body = encode_body(
-        &sproto,
-        "echo_request",
-        &EchoRequest {
-            data: unicode_data.into(),
-        },
-    );
+    let unicode_data = "Hello \u{4e16}\u{754c}! \u{1f389} \u{041f}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442} \u{043c}\u{0438}\u{0440}!";
+    let request_body = encode_struct(&sproto, "echo_request", |enc| {
+        enc.set_string(0, unicode_data)?;
+        Ok(())
+    });
     let request_packet = client_sender
         .request("echo", &request_body, Some(1), None)
         .unwrap();
@@ -745,8 +547,10 @@ fn test_rpc_unicode_in_request() {
 
     match dispatch_result {
         DispatchResult::Request { body, .. } => {
-            let req: EchoRequestDec = decode_body(&sproto, "echo_request", &body);
-            assert_eq!(req.data.as_deref(), Some(unicode_data));
+            assert_eq!(
+                decode_string(&sproto, "echo_request", &body, 0).as_deref(),
+                Some(unicode_data)
+            );
         }
         _ => panic!("expected Request"),
     }
@@ -758,7 +562,10 @@ fn test_rpc_empty_string_in_request() {
     let mut server_host = Host::new(sproto.clone());
     let mut client_sender = server_host.attach(sproto.clone());
 
-    let request_body = encode_body(&sproto, "echo_request", &EchoRequest { data: "".into() });
+    let request_body = encode_struct(&sproto, "echo_request", |enc| {
+        enc.set_string(0, "")?;
+        Ok(())
+    });
     let request_packet = client_sender
         .request("echo", &request_body, Some(1), None)
         .unwrap();
@@ -768,8 +575,10 @@ fn test_rpc_empty_string_in_request() {
 
     match dispatch_result {
         DispatchResult::Request { body, .. } => {
-            let req: EchoRequestDec = decode_body(&sproto, "echo_request", &body);
-            assert_eq!(req.data.as_deref(), Some(""));
+            assert_eq!(
+                decode_string(&sproto, "echo_request", &body, 0).as_deref(),
+                Some("")
+            );
         }
         _ => panic!("expected Request"),
     }
