@@ -108,9 +108,7 @@ fn encode_array_field(
     enc: &mut StructEncoder,
 ) -> Result<(), EncodeError> {
     let arr = lua_to_table(val, &field.name)?;
-    let len = arr
-        .len()
-        .map_err(|e| EncodeError::Other(e.to_string()))? as usize;
+    let len = arr.len().map_err(|e| EncodeError::Other(e.to_string()))? as usize;
 
     match &field.field_type {
         FieldType::Integer => {

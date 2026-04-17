@@ -9,9 +9,13 @@ sproto-rust/
     lib.rs                  -- 公共 API 导出
     error.rs                -- 错误类型定义
     types.rs                -- 模式元数据类型
+    schema_traits.rs        -- SchemaEncode / SchemaDecode trait (Direct API)
     derive_traits.rs        -- SprotoEncode / SprotoDecode trait
     codec/                  -- 编解码模块
-      mod.rs, wire.rs
+      mod.rs                -- Direct API: to_bytes(), from_bytes()
+      wire.rs               -- 小端读写原语、常量
+      encoder.rs            -- StructEncoder: tag-based 结构体编码引擎
+      decoder.rs            -- StructDecoder: tag-based 结构体解码引擎
     pack.rs                 -- 零压缩
     parser/                 -- 文本模式解析器
       mod.rs, lexer.rs, ast.rs, grammar.rs, schema_builder.rs
@@ -27,6 +31,10 @@ sproto-rust/
   sproto-lua/               -- Lua FFI 绑定 crate
     Cargo.toml
     src/
+      lib.rs                -- Lua 模块入口
+      lua_codec.rs          -- LuaTable <-> wire bytes (基于 StructEncoder/StructDecoder)
+      userdata.rs           -- Lua userdata 封装
+      error.rs              -- 错误转换
   tests/                    -- 集成测试
     binary_schema_tests.rs  -- 二进制模式加载测试
     compatibility_tests.rs  -- 前向/后向兼容性测试
@@ -114,16 +122,16 @@ cargo test -- --nocapture
 
 | 测试类别 | 文件 | 数量 | 说明 |
 |---------|------|------|------|
-| 单元测试 | src/ 各模块内 | 37 | 组件级测试（词法分析、解析器、线格式读写、pack/unpack、RPC header 等） |
+| 单元测试 | src/ 各模块内 | 47 | 组件级测试（词法分析、解析器、线格式读写、pack/unpack、RPC header、StructEncoder/StructDecoder 往返等） |
 | 二进制模式 | binary_schema_tests.rs | 3 | 加载 C 生成的 .bin 模式 |
 | 解码测试 | decode_tests.rs | 14 | 解码 C 和 Go 生成的二进制数据并验证字段值 |
 | 编码测试 | encode_tests.rs | 14 | 编码并与 C/Go 输出字节比对 |
 | 压缩测试 | pack_tests.rs | 17 | pack/unpack 交叉验证 |
-| 往返测试 | roundtrip_tests.rs | 48 | 自洽性测试（serde encode/decode、pack/unpack、derive 往返、完整管线） |
+| 往返测试 | roundtrip_tests.rs | 57 | 自洽性测试（serde、derive、Direct API 往返、完整管线） |
 | RPC 测试 | rpc_tests.rs | 15 | RPC 功能（dispatch、session、协议配置、错误处理） |
-| 派生宏测试 | derive_tests.rs | 5 | 派生宏编解码功能 |
+| 派生宏测试 | derive_tests.rs | 11 | 派生宏编解码功能 |
 | 兼容性测试 | compatibility_tests.rs | 13 | 前向/后向兼容性（serde + derive） |
-| **合计** | | **~166** | 全部通过 |
+| **合计** | | **194** | 全部通过 |
 
 ### 测试策略
 
