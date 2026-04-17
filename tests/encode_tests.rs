@@ -8,8 +8,8 @@ fn testdata(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e))
 }
 
-fn load_person_data_sproto() -> sproto::Sproto {
-    binary_schema::load_binary(&testdata("person_data_schema.bin")).unwrap()
+fn load_sproto() -> sproto::Sproto {
+    binary_schema::load_binary(&testdata("schema.bin")).unwrap()
 }
 
 fn hexdump(data: &[u8]) -> String {
@@ -34,37 +34,66 @@ fn decode<T: for<'de> Deserialize<'de>>(
 }
 
 // ---------------------------------------------------------------------------
-// Serde structs matching the person_data binary schema
+// Serde helper for binary (Vec<u8>) fields
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+mod opt_bytes {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(val: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        match val {
+            Some(b) => serde_bytes::serialize(b, s),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        Ok(Some(serde_bytes::deserialize(d)?))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Serde structs matching the unified binary schema
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Default)]
+struct PhoneNumber {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    number: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    r#type: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Default)]
 struct Person {
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     age: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    marital: Option<bool>,
+    active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_bytes")]
+    photo: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fpn: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phone: Option<PhoneNumber>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phones: Option<Vec<PhoneNumber>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<Person>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct Data {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     numbers: Option<Vec<i64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    bools: Option<Vec<bool>>,
+    flags: Option<Vec<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    number: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bignumber: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    double: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    doubles: Option<Vec<f64>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fpn: Option<i64>,
+    values: Option<Vec<f64>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -73,12 +102,12 @@ struct Data {
 
 #[test]
 fn test_encode_simple_struct() {
-    let sproto = load_person_data_sproto();
+    let sproto = load_sproto();
     let value = Person {
         name: Some("Alice".into()),
         age: Some(13),
-        marital: Some(false),
-        children: None,
+        active: Some(false),
+        ..Default::default()
     };
     let encoded = encode(&sproto, "Person", &value);
     let expected = testdata("simple_struct_encoded.bin");
@@ -90,26 +119,65 @@ fn test_encode_simple_struct() {
 }
 
 #[test]
+fn test_encode_all_scalars() {
+    let sproto = load_sproto();
+    let value = Person {
+        name: Some("Alice".into()),
+        age: Some(30),
+        active: Some(true),
+        score: Some(0.01171875),
+        photo: Some(vec![0x28, 0x29, 0x30, 0x31]),
+        fpn: Some(182), // integer(2): pre-scaled
+        ..Default::default()
+    };
+    let encoded = encode(&sproto, "Person", &value);
+    let expected = testdata("all_scalars_encoded.bin");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "all_scalars encode mismatch"
+    );
+}
+
+#[test]
+fn test_encode_nested_struct() {
+    let sproto = load_sproto();
+    let value = Person {
+        name: Some("Alice".into()),
+        phone: Some(PhoneNumber {
+            number: Some("123456789".into()),
+            r#type: Some(1),
+        }),
+        ..Default::default()
+    };
+    let encoded = encode(&sproto, "Person", &value);
+    let expected = testdata("nested_struct_encoded.bin");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "nested_struct encode mismatch"
+    );
+}
+
+#[test]
 fn test_encode_struct_array() {
-    let sproto = load_person_data_sproto();
+    let sproto = load_sproto();
     let value = Person {
         name: Some("Bob".into()),
         age: Some(40),
-        marital: None,
         children: Some(vec![
             Person {
                 name: Some("Alice".into()),
                 age: Some(13),
-                marital: None,
-                children: None,
+                ..Default::default()
             },
             Person {
                 name: Some("Carol".into()),
                 age: Some(5),
-                marital: None,
-                children: None,
+                ..Default::default()
             },
         ]),
+        ..Default::default()
     };
     let encoded = encode(&sproto, "Person", &value);
     let expected = testdata("struct_array_encoded.bin");
@@ -121,61 +189,46 @@ fn test_encode_struct_array() {
 }
 
 #[test]
-fn test_encode_number_array() {
-    let sproto = load_person_data_sproto();
-    let value = Data {
+fn test_encode_int_array() {
+    let sproto = load_sproto();
+    let value = Person {
         numbers: Some(vec![1, 2, 3, 4, 5]),
-        bools: None,
-        number: None,
-        bignumber: None,
-        double: None,
-        doubles: None,
-        fpn: None,
+        ..Default::default()
     };
-    let encoded = encode(&sproto, "Data", &value);
-    let expected = testdata("number_array_encoded.bin");
+    let encoded = encode(&sproto, "Person", &value);
+    let expected = testdata("int_array_encoded.bin");
     assert_eq!(
         hexdump(&encoded),
         hexdump(&expected),
-        "number_array encode mismatch"
+        "int_array encode mismatch"
     );
 }
 
 #[test]
-fn test_encode_big_number_array() {
-    let sproto = load_person_data_sproto();
+fn test_encode_big_int_array() {
+    let sproto = load_sproto();
     let base: i64 = 1 << 32;
-    let value = Data {
+    let value = Person {
         numbers: Some(vec![base + 1, base + 2, base + 3]),
-        bools: None,
-        number: None,
-        bignumber: None,
-        double: None,
-        doubles: None,
-        fpn: None,
+        ..Default::default()
     };
-    let encoded = encode(&sproto, "Data", &value);
-    let expected = testdata("big_number_array_encoded.bin");
+    let encoded = encode(&sproto, "Person", &value);
+    let expected = testdata("big_int_array_encoded.bin");
     assert_eq!(
         hexdump(&encoded),
         hexdump(&expected),
-        "big_number_array encode mismatch"
+        "big_int_array encode mismatch"
     );
 }
 
 #[test]
 fn test_encode_bool_array() {
-    let sproto = load_person_data_sproto();
-    let value = Data {
-        numbers: None,
-        bools: Some(vec![false, true, false]),
-        number: None,
-        bignumber: None,
-        double: None,
-        doubles: None,
-        fpn: None,
+    let sproto = load_sproto();
+    let value = Person {
+        flags: Some(vec![false, true, false]),
+        ..Default::default()
     };
-    let encoded = encode(&sproto, "Data", &value);
+    let encoded = encode(&sproto, "Person", &value);
     let expected = testdata("bool_array_encoded.bin");
     assert_eq!(
         hexdump(&encoded),
@@ -186,17 +239,13 @@ fn test_encode_bool_array() {
 
 #[test]
 fn test_encode_number() {
-    let sproto = load_person_data_sproto();
-    let value = Data {
-        numbers: None,
-        bools: None,
-        number: Some(100000),
-        bignumber: Some(-10000000000),
-        double: None,
-        doubles: None,
-        fpn: None,
+    let sproto = load_sproto();
+    let value = Person {
+        age: Some(100000),
+        id: Some(-10000000000),
+        ..Default::default()
     };
-    let encoded = encode(&sproto, "Data", &value);
+    let encoded = encode(&sproto, "Person", &value);
     let expected = testdata("number_encoded.bin");
     assert_eq!(
         hexdump(&encoded),
@@ -207,17 +256,13 @@ fn test_encode_number() {
 
 #[test]
 fn test_encode_double() {
-    let sproto = load_person_data_sproto();
-    let value = Data {
-        numbers: None,
-        bools: None,
-        number: None,
-        bignumber: None,
-        double: Some(0.01171875),
-        doubles: Some(vec![0.01171875, 23.0, 4.0]),
-        fpn: None,
+    let sproto = load_sproto();
+    let value = Person {
+        score: Some(0.01171875),
+        values: Some(vec![0.01171875, 23.0, 4.0]),
+        ..Default::default()
     };
-    let encoded = encode(&sproto, "Data", &value);
+    let encoded = encode(&sproto, "Person", &value);
     let expected = testdata("double_encoded.bin");
     assert_eq!(
         hexdump(&encoded),
@@ -227,24 +272,87 @@ fn test_encode_double() {
 }
 
 #[test]
-fn test_encode_fixed_point() {
-    let sproto = load_person_data_sproto();
-    // fpn is integer(2): 1.82 * 100 = 182 (pre-scaled)
-    let value = Data {
-        numbers: None,
-        bools: None,
-        number: None,
-        bignumber: None,
-        double: None,
-        doubles: None,
-        fpn: Some(182),
+fn test_encode_string_array() {
+    let sproto = load_sproto();
+    let value = Person {
+        tags: Some(vec![
+            "hello".into(),
+            "world".into(),
+            "\u{4f60}\u{597d}".into(),
+        ]),
+        ..Default::default()
     };
-    let encoded = encode(&sproto, "Data", &value);
+    let encoded = encode(&sproto, "Person", &value);
+    let expected = testdata("string_array_encoded.bin");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "string_array encode mismatch"
+    );
+}
+
+#[test]
+fn test_encode_fixed_point() {
+    let sproto = load_sproto();
+    // fpn is integer(2): 1.82 * 100 = 182 (pre-scaled)
+    let value = Person {
+        fpn: Some(182),
+        ..Default::default()
+    };
+    let encoded = encode(&sproto, "Person", &value);
     let expected = testdata("fixed_point_encoded.bin");
     assert_eq!(
         hexdump(&encoded),
         hexdump(&expected),
         "fixed_point encode mismatch"
+    );
+}
+
+#[test]
+fn test_encode_full() {
+    let sproto = load_sproto();
+    let value = Person {
+        name: Some("Alice".into()),
+        age: Some(30),
+        active: Some(true),
+        score: Some(0.01171875),
+        photo: Some(vec![0xDE, 0xAD, 0xBE, 0xEF]),
+        fpn: Some(182),
+        id: Some(10000),
+        phone: Some(PhoneNumber {
+            number: Some("123456789".into()),
+            r#type: Some(1),
+        }),
+        phones: Some(vec![
+            PhoneNumber {
+                number: Some("123456789".into()),
+                r#type: Some(1),
+            },
+            PhoneNumber {
+                number: Some("87654321".into()),
+                r#type: Some(2),
+            },
+        ]),
+        children: Some(vec![Person {
+            name: Some("Bob".into()),
+            age: Some(5),
+            ..Default::default()
+        }]),
+        tags: Some(vec![
+            "hello".into(),
+            "world".into(),
+            "\u{4f60}\u{597d}".into(),
+        ]),
+        numbers: Some(vec![1, 2, 3, 4, 5]),
+        flags: Some(vec![false, true, false]),
+        values: Some(vec![0.01171875, 23.0, 4.0]),
+    };
+    let encoded = encode(&sproto, "Person", &value);
+    let expected = testdata("full_encoded.bin");
+    assert_eq!(
+        hexdump(&encoded),
+        hexdump(&expected),
+        "full encode mismatch"
     );
 }
 
@@ -311,24 +419,8 @@ struct GoData {
     bytes: Option<Vec<u8>>,
 }
 
-/// Custom serializer for Option<Vec<u8>> that uses serde_bytes when Some.
-mod opt_bytes {
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(val: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
-        match val {
-            Some(b) => serde_bytes::serialize(b, s),
-            None => s.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
-        Ok(Some(serde_bytes::deserialize(d)?))
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct PhoneNumber {
+struct GoPhoneNumber {
     number: String,
     r#type: i64,
 }
@@ -342,11 +434,11 @@ struct GoPerson {
     #[serde(skip_serializing_if = "Option::is_none")]
     email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    phone: Option<Vec<PhoneNumber>>,
+    phone: Option<Vec<GoPhoneNumber>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct AddressBook {
+struct GoAddressBook {
     #[serde(skip_serializing_if = "Option::is_none")]
     person: Option<Vec<GoPerson>>,
 }
@@ -396,7 +488,7 @@ fn test_encode_bytes_field() {
 }
 
 #[test]
-fn test_encode_string_array() {
+fn test_encode_go_string_array() {
     let schema = go_data_schema();
     let value = GoData {
         numbers: None,
@@ -449,18 +541,18 @@ fn test_encode_empty_double_slice() {
 #[test]
 fn test_encode_addressbook() {
     let schema = go_addressbook_schema();
-    let value = AddressBook {
+    let value = GoAddressBook {
         person: Some(vec![
             GoPerson {
                 name: Some("Alice".into()),
                 id: Some(10000),
                 email: None,
                 phone: Some(vec![
-                    PhoneNumber {
+                    GoPhoneNumber {
                         number: "123456789".into(),
                         r#type: 1,
                     },
-                    PhoneNumber {
+                    GoPhoneNumber {
                         number: "87654321".into(),
                         r#type: 2,
                     },
@@ -470,7 +562,7 @@ fn test_encode_addressbook() {
                 name: Some("Bob".into()),
                 id: Some(20000),
                 email: None,
-                phone: Some(vec![PhoneNumber {
+                phone: Some(vec![GoPhoneNumber {
                     number: "01234567890".into(),
                     r#type: 3,
                 }]),
@@ -484,42 +576,31 @@ fn test_encode_addressbook() {
 // Round-trip: decode binary -> re-encode -> assert identical bytes
 #[test]
 fn test_encode_decode_roundtrip_all() {
-    let sproto = load_person_data_sproto();
-    let cases: Vec<(&str, &str)> = vec![
-        ("Person", "simple_struct_encoded.bin"),
-        ("Person", "struct_array_encoded.bin"),
-        ("Data", "number_array_encoded.bin"),
-        ("Data", "big_number_array_encoded.bin"),
-        ("Data", "bool_array_encoded.bin"),
-        ("Data", "number_encoded.bin"),
-        ("Data", "double_encoded.bin"),
-        ("Data", "fixed_point_encoded.bin"),
+    let sproto = load_sproto();
+    let cases: Vec<&str> = vec![
+        "simple_struct_encoded.bin",
+        "all_scalars_encoded.bin",
+        "nested_struct_encoded.bin",
+        "struct_array_encoded.bin",
+        "int_array_encoded.bin",
+        "big_int_array_encoded.bin",
+        "bool_array_encoded.bin",
+        "number_encoded.bin",
+        "double_encoded.bin",
+        "string_array_encoded.bin",
+        "fixed_point_encoded.bin",
+        "full_encoded.bin",
     ];
 
-    for (type_name, file) in cases {
+    for file in cases {
         let original = testdata(file);
-        match type_name {
-            "Person" => {
-                let decoded: Person = decode(&sproto, type_name, &original);
-                let reencoded = encode(&sproto, type_name, &decoded);
-                assert_eq!(
-                    hexdump(&reencoded),
-                    hexdump(&original),
-                    "round-trip failed for {}",
-                    file
-                );
-            }
-            "Data" => {
-                let decoded: Data = decode(&sproto, type_name, &original);
-                let reencoded = encode(&sproto, type_name, &decoded);
-                assert_eq!(
-                    hexdump(&reencoded),
-                    hexdump(&original),
-                    "round-trip failed for {}",
-                    file
-                );
-            }
-            _ => unreachable!(),
-        }
+        let decoded: Person = decode(&sproto, "Person", &original);
+        let reencoded = encode(&sproto, "Person", &decoded);
+        assert_eq!(
+            hexdump(&reencoded),
+            hexdump(&original),
+            "round-trip failed for {}",
+            file
+        );
     }
 }

@@ -130,7 +130,7 @@ mod tests {
 
         let data = Data {
             numbers: vec![1, 2, 3, 4, 5],
-            value: 3.14,
+            value: 3.15,
         };
 
         let bytes = to_bytes(&sproto, data_type, &data).unwrap();

@@ -55,22 +55,34 @@ pack_test!(
     "simple_struct_packed.bin"
 );
 pack_test!(
+    test_pack_all_scalars,
+    test_unpack_all_scalars,
+    "all_scalars_encoded.bin",
+    "all_scalars_packed.bin"
+);
+pack_test!(
+    test_pack_nested_struct,
+    test_unpack_nested_struct,
+    "nested_struct_encoded.bin",
+    "nested_struct_packed.bin"
+);
+pack_test!(
     test_pack_struct_array,
     test_unpack_struct_array,
     "struct_array_encoded.bin",
     "struct_array_packed.bin"
 );
 pack_test!(
-    test_pack_number_array,
-    test_unpack_number_array,
-    "number_array_encoded.bin",
-    "number_array_packed.bin"
+    test_pack_int_array,
+    test_unpack_int_array,
+    "int_array_encoded.bin",
+    "int_array_packed.bin"
 );
 pack_test!(
-    test_pack_big_number_array,
-    test_unpack_big_number_array,
-    "big_number_array_encoded.bin",
-    "big_number_array_packed.bin"
+    test_pack_big_int_array,
+    test_unpack_big_int_array,
+    "big_int_array_encoded.bin",
+    "big_int_array_packed.bin"
 );
 pack_test!(
     test_pack_bool_array,
@@ -91,29 +103,20 @@ pack_test!(
     "double_packed.bin"
 );
 pack_test!(
+    test_pack_string_array,
+    test_unpack_string_array,
+    "string_array_encoded.bin",
+    "string_array_packed.bin"
+);
+pack_test!(
     test_pack_fixed_point,
     test_unpack_fixed_point,
     "fixed_point_encoded.bin",
     "fixed_point_packed.bin"
 );
-
-// Pack/unpack round-trip on addressbook
-#[test]
-fn test_pack_unpack_addressbook() {
-    let encoded = testdata("addressbook_encoded.bin");
-    let expected_packed = testdata("addressbook_packed.bin");
-
-    let packed = pack::pack(&encoded);
-    assert_eq!(
-        hexdump(&packed),
-        hexdump(&expected_packed),
-        "addressbook pack mismatch"
-    );
-
-    let unpacked = pack::unpack(&packed).unwrap();
-    assert_eq!(
-        &unpacked[..encoded.len()],
-        &encoded[..],
-        "addressbook unpack mismatch"
-    );
-}
+pack_test!(
+    test_pack_full,
+    test_unpack_full,
+    "full_encoded.bin",
+    "full_packed.bin"
+);

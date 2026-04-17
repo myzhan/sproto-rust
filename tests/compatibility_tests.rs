@@ -364,7 +364,7 @@ mod derive_tests {
 
         assert_eq!(decoded.count, 0);
         assert_eq!(decoded.name, "");
-        assert_eq!(decoded.active, false);
+        assert!(!decoded.active);
     }
 }
 

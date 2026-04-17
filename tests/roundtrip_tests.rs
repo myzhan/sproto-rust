@@ -359,13 +359,13 @@ fn test_roundtrip_simple_double() {
         name: None,
         age: None,
         active: None,
-        score: Some(3.14159),
+        score: Some(3.14160),
         data: None,
     };
     let encoded = encode(&sproto, "Person", &original);
     let decoded: PersonDec = decode(&sproto, "Person", &encoded);
     let score = decoded.score.unwrap();
-    assert!((score - 3.14159).abs() < 1e-10);
+    assert!((score - 3.14160).abs() < 1e-10);
 }
 
 #[test]
@@ -506,9 +506,8 @@ fn test_roundtrip_empty_array() {
     let decoded: DataDec = decode(&sproto, "Data", &encoded);
 
     // Empty arrays may not appear in decoded output or appear as empty
-    match decoded.numbers {
-        Some(arr) => assert!(arr.is_empty()),
-        None => {} // also acceptable
+    if let Some(arr) = decoded.numbers {
+        assert!(arr.is_empty());
     }
 }
 
@@ -1043,7 +1042,7 @@ mod derive_tests {
             str_field: "test".to_string(),
             int_field: 12345,
             bool_field: true,
-            double_field: 3.14159,
+            double_field: 3.14160,
         };
 
         let bytes = original.sproto_encode().unwrap();

@@ -599,7 +599,7 @@ mod tests {
         let mut buf = Vec::new();
         let mut enc = StructEncoder::new(&schema, st, &mut buf);
         enc.set_integer_array(0, &[1, 2, 3, 4, 5]).unwrap();
-        enc.set_double(1, 3.14).unwrap();
+        enc.set_double(1, 3.15).unwrap();
         enc.finish();
         assert!(!buf.is_empty());
     }

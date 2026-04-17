@@ -520,7 +520,7 @@ mod tests {
         {
             let mut enc = StructEncoder::new(&schema, st, &mut buf);
             enc.set_integer_array(0, &[1, 2, 3, 4, 5]).unwrap();
-            enc.set_double(1, 3.14).unwrap();
+            enc.set_double(1, 3.15).unwrap();
             enc.set_bool_array(2, &[true, false, true]).unwrap();
             enc.finish();
         }
@@ -537,7 +537,7 @@ mod tests {
             }
         }
         assert_eq!(numbers, Some(vec![1, 2, 3, 4, 5]));
-        assert!((value.unwrap() - 3.14).abs() < 1e-10);
+        assert!((value.unwrap() - 3.15).abs() < 1e-10);
         assert_eq!(flags, Some(vec![true, false, true]));
     }
 

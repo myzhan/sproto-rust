@@ -27,151 +27,153 @@ local function hexdump(s)
 end
 
 -- =============================================================================
--- Schema 1: Person + Data (wire protocol examples from README)
+-- Unified data schema: covers all sproto type mappings
+--
+-- Scalar types: string, integer, boolean, double, binary, integer(N)
+-- Struct types: nested struct, struct array, recursive struct array
+-- Array types: *string, *integer, *boolean, *double
 -- =============================================================================
 
-local person_data_schema_text = [[
+local schema_text = [[
+.PhoneNumber {
+    number 0 : string
+    type 1 : integer
+}
+
 .Person {
     name 0 : string
     age 1 : integer
-    marital 2 : boolean
-    children 3 : *Person
-}
-
-.Data {
-    numbers 0 : *integer
-    bools 1 : *boolean
-    number 2 : integer
-    bignumber 3 : integer
-    double 4 : double
-    doubles 5 : *double
-    fpn 6 : integer(2)
+    active 2 : boolean
+    score 3 : double
+    photo 4 : binary
+    fpn 5 : integer(2)
+    id 6 : integer
+    phone 7 : PhoneNumber
+    phones 8 : *PhoneNumber
+    children 9 : *Person
+    tags 10 : *string
+    numbers 11 : *integer
+    flags 12 : *boolean
+    values 13 : *double
 }
 ]]
 
-local person_data_schema_bin = sprotoparser.parse(person_data_schema_text)
-write_file("person_data_schema.bin", person_data_schema_bin)
+local schema_bin = sprotoparser.parse(schema_text)
+write_file("schema.bin", schema_bin)
 
-local sp = sproto.new(person_data_schema_bin)
+local sp = sproto.new(schema_bin)
 
--- Example 1: simple_struct -- Person { name="Alice", age=13, marital=false }
-local ex1 = sp:encode("Person", { name = "Alice", age = 13, marital = false })
-write_file("simple_struct_encoded.bin", ex1)
-print("  simple_struct: " .. hexdump(ex1))
+-- Fixture 1: simple_struct -- basic scalars (string, integer, boolean)
+local simple_struct = { name = "Alice", age = 13, active = false }
+write_file("simple_struct_encoded.bin", sp:encode("Person", simple_struct))
+write_file("simple_struct_packed.bin", sp:pencode("Person", simple_struct))
+print("  simple_struct: " .. hexdump(sp:encode("Person", simple_struct)))
 
--- Example 2: struct_array -- Person with children
-local ex2 = sp:encode("Person", {
+-- Fixture 2: all_scalars -- all 6 scalar types
+local all_scalars = {
+    name = "Alice",
+    age = 30,
+    active = true,
+    score = 0.01171875,
+    photo = "\x28\x29\x30\x31",
+    fpn = 1.82,
+}
+write_file("all_scalars_encoded.bin", sp:encode("Person", all_scalars))
+write_file("all_scalars_packed.bin", sp:pencode("Person", all_scalars))
+print("  all_scalars: " .. hexdump(sp:encode("Person", all_scalars)))
+
+-- Fixture 3: nested_struct -- single nested struct
+local nested_struct = {
+    name = "Alice",
+    phone = { number = "123456789", type = 1 },
+}
+write_file("nested_struct_encoded.bin", sp:encode("Person", nested_struct))
+write_file("nested_struct_packed.bin", sp:pencode("Person", nested_struct))
+print("  nested_struct: " .. hexdump(sp:encode("Person", nested_struct)))
+
+-- Fixture 4: struct_array -- recursive struct array (children)
+local struct_array = {
     name = "Bob",
     age = 40,
     children = {
         { name = "Alice", age = 13 },
         { name = "Carol", age = 5 },
-    }
-})
-write_file("struct_array_encoded.bin", ex2)
-print("  struct_array: " .. hexdump(ex2))
+    },
+}
+write_file("struct_array_encoded.bin", sp:encode("Person", struct_array))
+write_file("struct_array_packed.bin", sp:pencode("Person", struct_array))
+print("  struct_array: " .. hexdump(sp:encode("Person", struct_array)))
 
--- Example 3: number_array -- Data { numbers = {1,2,3,4,5} }
-local ex3 = sp:encode("Data", { numbers = { 1, 2, 3, 4, 5 } })
-write_file("number_array_encoded.bin", ex3)
-print("  number_array: " .. hexdump(ex3))
+-- Fixture 5: int_array -- integer array (4-byte elements)
+local int_array = { numbers = { 1, 2, 3, 4, 5 } }
+write_file("int_array_encoded.bin", sp:encode("Person", int_array))
+write_file("int_array_packed.bin", sp:pencode("Person", int_array))
+print("  int_array: " .. hexdump(sp:encode("Person", int_array)))
 
--- Example 4: big_number_array -- Data { numbers = {(1<<32)+1, (1<<32)+2, (1<<32)+3} }
-local ex4 = sp:encode("Data", {
-    numbers = { (1<<32)+1, (1<<32)+2, (1<<32)+3 }
-})
-write_file("big_number_array_encoded.bin", ex4)
-print("  big_number_array: " .. hexdump(ex4))
+-- Fixture 6: big_int_array -- integer array (8-byte elements)
+local big_int_array = { numbers = { (1<<32)+1, (1<<32)+2, (1<<32)+3 } }
+write_file("big_int_array_encoded.bin", sp:encode("Person", big_int_array))
+write_file("big_int_array_packed.bin", sp:pencode("Person", big_int_array))
+print("  big_int_array: " .. hexdump(sp:encode("Person", big_int_array)))
 
--- Example 5: bool_array -- Data { bools = {false, true, false} }
-local ex5 = sp:encode("Data", { bools = { false, true, false } })
-write_file("bool_array_encoded.bin", ex5)
-print("  bool_array: " .. hexdump(ex5))
+-- Fixture 7: bool_array -- boolean array
+local bool_array = { flags = { false, true, false } }
+write_file("bool_array_encoded.bin", sp:encode("Person", bool_array))
+write_file("bool_array_packed.bin", sp:pencode("Person", bool_array))
+print("  bool_array: " .. hexdump(sp:encode("Person", bool_array)))
 
--- Example 6: number -- Data { number=100000, bignumber=-10000000000 }
-local ex6 = sp:encode("Data", { number = 100000, bignumber = -10000000000 })
-write_file("number_encoded.bin", ex6)
-print("  number: " .. hexdump(ex6))
+-- Fixture 8: number -- large integers (4-byte and 8-byte)
+local number = { age = 100000, id = -10000000000 }
+write_file("number_encoded.bin", sp:encode("Person", number))
+write_file("number_packed.bin", sp:pencode("Person", number))
+print("  number: " .. hexdump(sp:encode("Person", number)))
 
--- Example 7: double -- Data { double=0.01171875, doubles={0.01171875, 23, 4} }
-local ex7 = sp:encode("Data", {
-    double = 0.01171875,
-    doubles = { 0.01171875, 23, 4 }
-})
-write_file("double_encoded.bin", ex7)
-print("  double: " .. hexdump(ex7))
+-- Fixture 9: double -- double scalar and double array
+local double = { score = 0.01171875, values = { 0.01171875, 23, 4 } }
+write_file("double_encoded.bin", sp:encode("Person", double))
+write_file("double_packed.bin", sp:pencode("Person", double))
+print("  double: " .. hexdump(sp:encode("Person", double)))
 
--- Example 8: fixed_point -- Data { fpn = 1.82 }
-local ex8 = sp:encode("Data", { fpn = 1.82 })
-write_file("fixed_point_encoded.bin", ex8)
-print("  fixed_point: " .. hexdump(ex8))
+-- Fixture 10: string_array -- string array (including UTF-8)
+local string_array = { tags = { "hello", "world", "\xe4\xbd\xa0\xe5\xa5\xbd" } }
+write_file("string_array_encoded.bin", sp:encode("Person", string_array))
+write_file("string_array_packed.bin", sp:pencode("Person", string_array))
+print("  string_array: " .. hexdump(sp:encode("Person", string_array)))
 
--- Packed versions
-write_file("simple_struct_packed.bin", sp:pencode("Person", { name = "Alice", age = 13, marital = false }))
-write_file("struct_array_packed.bin", sp:pencode("Person", {
-    name = "Bob", age = 40,
+-- Fixture 11: fixed_point -- integer(N) type
+local fixed_point = { fpn = 1.82 }
+write_file("fixed_point_encoded.bin", sp:encode("Person", fixed_point))
+write_file("fixed_point_packed.bin", sp:pencode("Person", fixed_point))
+print("  fixed_point: " .. hexdump(sp:encode("Person", fixed_point)))
+
+-- Fixture 12: full -- all 14 fields populated
+local full = {
+    name = "Alice",
+    age = 30,
+    active = true,
+    score = 0.01171875,
+    photo = "\xDE\xAD\xBE\xEF",
+    fpn = 1.82,
+    id = 10000,
+    phone = { number = "123456789", type = 1 },
+    phones = {
+        { number = "123456789", type = 1 },
+        { number = "87654321", type = 2 },
+    },
     children = {
-        { name = "Alice", age = 13 },
-        { name = "Carol", age = 5 },
-    }
-}))
-write_file("number_array_packed.bin", sp:pencode("Data", { numbers = { 1, 2, 3, 4, 5 } }))
-write_file("big_number_array_packed.bin", sp:pencode("Data", { numbers = { (1<<32)+1, (1<<32)+2, (1<<32)+3 } }))
-write_file("bool_array_packed.bin", sp:pencode("Data", { bools = { false, true, false } }))
-write_file("number_packed.bin", sp:pencode("Data", { number = 100000, bignumber = -10000000000 }))
-write_file("double_packed.bin", sp:pencode("Data", { double = 0.01171875, doubles = { 0.01171875, 23, 4 } }))
-write_file("fixed_point_packed.bin", sp:pencode("Data", { fpn = 1.82 }))
-
--- =============================================================================
--- Schema 2: AddressBook (map / indexed array)
--- =============================================================================
-
-local addressbook_schema_text = [[
-.Person {
-    name 0 : string
-    id 1 : integer
-    email 2 : string
-
-    .PhoneNumber {
-        number 0 : string
-        type 1 : integer
-    }
-
-    phone 3 : *PhoneNumber
-}
-
-.AddressBook {
-    person 0 : *Person(id)
-    others 1 : *Person
-}
-]]
-
-local addressbook_schema_bin = sprotoparser.parse(addressbook_schema_text)
-write_file("addressbook_schema.bin", addressbook_schema_bin)
-
-local sp2 = sproto.new(addressbook_schema_bin)
-
-local ab = {
-    person = {
-        { name = "Alice", id = 10000, phone = {
-            { number = "123456789", type = 1 },
-            { number = "87654321", type = 2 },
-        }},
-        { name = "Bob", id = 20000, phone = {
-            { number = "01234567890", type = 3 },
-        }},
+        { name = "Bob", age = 5 },
     },
-    others = {
-        { name = "Carol", id = 30000 },
-    },
+    tags = { "hello", "world", "\xe4\xbd\xa0\xe5\xa5\xbd" },
+    numbers = { 1, 2, 3, 4, 5 },
+    flags = { false, true, false },
+    values = { 0.01171875, 23, 4 },
 }
-
-local ab_encoded = sp2:encode("AddressBook", ab)
-write_file("addressbook_encoded.bin", ab_encoded)
-write_file("addressbook_packed.bin", sp2:pencode("AddressBook", ab))
+write_file("full_encoded.bin", sp:encode("Person", full))
+write_file("full_packed.bin", sp:pencode("Person", full))
+print("  full: " .. hexdump(sp:encode("Person", full)))
 
 -- =============================================================================
--- Schema 3: RPC (server + client)
+-- RPC schema (unchanged)
 -- =============================================================================
 
 local rpc_schema_text = [[

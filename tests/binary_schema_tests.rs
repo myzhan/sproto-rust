@@ -8,56 +8,53 @@ fn testdata(name: &str) -> Vec<u8> {
 }
 
 #[test]
-fn test_load_person_data_schema() {
-    let data = testdata("person_data_schema.bin");
+fn test_load_schema() {
+    let data = testdata("schema.bin");
     let sproto = binary_schema::load_binary(&data).unwrap();
 
-    // Should have Data and Person types
+    // PhoneNumber type
+    let phone = sproto
+        .get_type("PhoneNumber")
+        .expect("PhoneNumber type missing");
+    assert_eq!(phone.fields.len(), 2);
+    assert_eq!(&*phone.fields[0].name, "number");
+    assert_eq!(phone.fields[0].tag, 0);
+    assert_eq!(&*phone.fields[1].name, "type");
+    assert_eq!(phone.fields[1].tag, 1);
+
+    // Person type — 14 fields covering all sproto type mappings
     let person = sproto.get_type("Person").expect("Person type missing");
-    assert_eq!(person.fields.len(), 4);
-    assert_eq!(&*person.fields[0].name, "name");
-    assert_eq!(person.fields[0].tag, 0);
-    assert_eq!(&*person.fields[1].name, "age");
-    assert_eq!(person.fields[1].tag, 1);
-    assert_eq!(&*person.fields[2].name, "marital");
-    assert_eq!(person.fields[2].tag, 2);
-    assert_eq!(&*person.fields[3].name, "children");
-    assert_eq!(person.fields[3].tag, 3);
-    assert!(person.fields[3].is_array);
+    assert_eq!(person.fields.len(), 14);
 
-    let data_type = sproto.get_type("Data").expect("Data type missing");
-    assert_eq!(data_type.fields.len(), 7);
-    assert_eq!(&*data_type.fields[0].name, "numbers");
-    assert!(data_type.fields[0].is_array);
-    assert_eq!(&*data_type.fields[6].name, "fpn");
-    assert!(data_type.fields[6].decimal_precision > 0);
-}
+    let expected_fields = [
+        ("name", 0, false),
+        ("age", 1, false),
+        ("active", 2, false),
+        ("score", 3, false),
+        ("photo", 4, false),
+        ("fpn", 5, false),
+        ("id", 6, false),
+        ("phone", 7, false),
+        ("phones", 8, true),
+        ("children", 9, true),
+        ("tags", 10, true),
+        ("numbers", 11, true),
+        ("flags", 12, true),
+        ("values", 13, true),
+    ];
 
-#[test]
-fn test_load_addressbook_schema() {
-    let data = testdata("addressbook_schema.bin");
-    let sproto = binary_schema::load_binary(&data).unwrap();
+    for (i, &(name, tag, is_array)) in expected_fields.iter().enumerate() {
+        assert_eq!(&*person.fields[i].name, name, "field {} name mismatch", i);
+        assert_eq!(person.fields[i].tag, tag, "field {} tag mismatch", i);
+        assert_eq!(
+            person.fields[i].is_array, is_array,
+            "field {} is_array mismatch",
+            i
+        );
+    }
 
-    let ab = sproto
-        .get_type("AddressBook")
-        .expect("AddressBook type missing");
-    assert_eq!(ab.fields.len(), 2);
-
-    // person field should be array with key
-    let person_field = &ab.fields[0];
-    assert_eq!(&*person_field.name, "person");
-    assert!(person_field.is_array);
-    assert!(person_field.key_tag >= 0); // has a key (id field tag)
-
-    // others field should be plain array
-    let others_field = &ab.fields[1];
-    assert_eq!(&*others_field.name, "others");
-    assert!(others_field.is_array);
-
-    // Person type should exist
-    assert!(sproto.get_type("Person").is_some());
-    // Nested PhoneNumber type
-    assert!(sproto.get_type("Person.PhoneNumber").is_some());
+    // fpn has decimal precision
+    assert!(person.fields[5].decimal_precision > 0);
 }
 
 #[test]

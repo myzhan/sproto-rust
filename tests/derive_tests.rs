@@ -47,7 +47,7 @@ fn test_derive_encode_decode_primitives() {
 fn test_derive_encode_decode_arrays() {
     let data = Data {
         numbers: vec![1, 2, 3, 4, 5],
-        value: 3.14,
+        value: 3.15,
     };
 
     let bytes = data.sproto_encode().unwrap();
