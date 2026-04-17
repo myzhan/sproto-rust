@@ -18,6 +18,13 @@ local function write_file(path, data)
     print(string.format("wrote %s (%d bytes)", path, #data))
 end
 
+local function read_file(path)
+    local f = assert(io.open(script_dir .. path, "r"))
+    local data = f:read("*all")
+    f:close()
+    return data
+end
+
 local function hexdump(s)
     local t = {}
     for i = 1, #s do
@@ -34,29 +41,7 @@ end
 -- Array types: *string, *integer, *boolean, *double
 -- =============================================================================
 
-local schema_text = [[
-.PhoneNumber {
-    number 0 : string
-    type 1 : integer
-}
-
-.Person {
-    name 0 : string
-    age 1 : integer
-    active 2 : boolean
-    score 3 : double
-    photo 4 : binary
-    fpn 5 : integer(2)
-    id 6 : integer
-    phone 7 : PhoneNumber
-    phones 8 : *PhoneNumber
-    children 9 : *Person
-    tags 10 : *string
-    numbers 11 : *integer
-    flags 12 : *boolean
-    values 13 : *double
-}
-]]
+local schema_text = read_file("schema.sproto")
 
 local schema_bin = sprotoparser.parse(schema_text)
 write_file("schema.bin", schema_bin)

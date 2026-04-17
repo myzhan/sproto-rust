@@ -1,0 +1,21 @@
+.PhoneNumber {
+    number 0 : string
+    type 1 : integer
+}
+
+.Person {
+    name 0 : string
+    age 1 : integer
+    active 2 : boolean
+    score 3 : double
+    photo 4 : binary
+    fpn 5 : integer(2)
+    id 6 : integer
+    phone 7 : PhoneNumber
+    phones 8 : *PhoneNumber
+    children 9 : *Person
+    tags 10 : *string
+    numbers 11 : *integer
+    flags 12 : *boolean
+    values 13 : *double
+}

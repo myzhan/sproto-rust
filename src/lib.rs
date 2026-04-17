@@ -17,6 +17,7 @@
 
 pub mod binary_schema;
 pub mod codec;
+pub mod codegen;
 pub mod derive_traits;
 pub mod error;
 pub mod pack;

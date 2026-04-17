@@ -5,6 +5,11 @@ edition = "2021"
 description = "Rust implementation of the sproto binary serialization protocol"
 autobenches = false
 autoexamples = false
+autobins = false
+
+[[bin]]
+name = "sproto-codegen"
+path = "src/bin/sproto-codegen.rs"
 
 [features]
 default = ["derive", "serde"]
