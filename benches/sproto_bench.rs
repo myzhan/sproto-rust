@@ -7,6 +7,37 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use sproto::codec::{StructDecoder, StructEncoder};
 use sproto::pack;
 use sproto::types::{Field, FieldType};
+use sproto::{SprotoDecode, SprotoEncode};
+
+// ============================================================================
+// Derive Structs
+// ============================================================================
+
+#[derive(SprotoEncode, SprotoDecode, Clone)]
+struct PersonDerive {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    age: i64,
+    #[sproto(tag = 2)]
+    active: bool,
+}
+
+#[derive(SprotoEncode, SprotoDecode, Clone)]
+struct UserProfileDerive {
+    #[sproto(tag = 0)]
+    id: i64,
+    #[sproto(tag = 1)]
+    username: String,
+    #[sproto(tag = 2)]
+    email: String,
+    #[sproto(tag = 3)]
+    age: i64,
+    #[sproto(tag = 4)]
+    verified: bool,
+    #[sproto(tag = 5)]
+    score: f64,
+}
 
 // ============================================================================
 // Schema Creation Helpers
@@ -275,6 +306,93 @@ fn bench_unpack(c: &mut Criterion) {
 }
 
 // ============================================================================
+// Derive Encode Benchmarks
+// ============================================================================
+
+fn bench_derive_encode(c: &mut Criterion) {
+    let mut group = c.benchmark_group("derive_encode");
+
+    let person_sproto = create_person_schema();
+    let person = PersonDerive {
+        name: "Alice".to_string(),
+        age: 30,
+        active: true,
+    };
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("person", |b| {
+        b.iter(|| sproto::to_bytes(black_box(&person_sproto), "Person", black_box(&person)).unwrap())
+    });
+
+    let user_sproto = create_user_profile_schema();
+    let user = UserProfileDerive {
+        id: 12345,
+        username: "alice_wonder".to_string(),
+        email: "alice@example.com".to_string(),
+        age: 28,
+        verified: true,
+        score: 98.5,
+    };
+    group.bench_function("user_profile", |b| {
+        b.iter(|| {
+            sproto::to_bytes(black_box(&user_sproto), "UserProfile", black_box(&user)).unwrap()
+        })
+    });
+
+    group.finish();
+}
+
+// ============================================================================
+// Derive Decode Benchmarks
+// ============================================================================
+
+fn bench_derive_decode(c: &mut Criterion) {
+    let mut group = c.benchmark_group("derive_decode");
+
+    let person_sproto = create_person_schema();
+    let person = PersonDerive {
+        name: "Alice".to_string(),
+        age: 30,
+        active: true,
+    };
+    let person_bytes = sproto::to_bytes(&person_sproto, "Person", &person).unwrap();
+    group.throughput(Throughput::Bytes(person_bytes.len() as u64));
+    group.bench_function("person", |b| {
+        b.iter(|| {
+            sproto::from_bytes::<PersonDerive>(
+                black_box(&person_sproto),
+                "Person",
+                black_box(&person_bytes),
+            )
+            .unwrap()
+        })
+    });
+
+    let user_sproto = create_user_profile_schema();
+    let user = UserProfileDerive {
+        id: 12345,
+        username: "alice_wonder".to_string(),
+        email: "alice@example.com".to_string(),
+        age: 28,
+        verified: true,
+        score: 98.5,
+    };
+    let user_bytes = sproto::to_bytes(&user_sproto, "UserProfile", &user).unwrap();
+    group.throughput(Throughput::Bytes(user_bytes.len() as u64));
+    group.bench_function("user_profile", |b| {
+        b.iter(|| {
+            sproto::from_bytes::<UserProfileDerive>(
+                black_box(&user_sproto),
+                "UserProfile",
+                black_box(&user_bytes),
+            )
+            .unwrap()
+        })
+    });
+
+    group.finish();
+}
+
+// ============================================================================
 // Criterion Configuration
 // ============================================================================
 
@@ -282,6 +400,8 @@ criterion_group!(
     benches,
     bench_encode,
     bench_decode,
+    bench_derive_encode,
+    bench_derive_decode,
     bench_pack,
     bench_unpack,
 );

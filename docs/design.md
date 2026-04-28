@@ -11,6 +11,7 @@ src/
   lib.rs                  -- 公共 API 导出
   error.rs                -- 错误类型 (EncodeError, DecodeError, PackError, RpcError, SprotoError)
   types.rs                -- 模式元数据: Sproto, SprotoType, Field, Protocol, FieldType (+ Builder API)
+  derive_traits.rs        -- SprotoEncode/SprotoDecode trait + to_bytes/from_bytes 便捷函数
   codec/
     mod.rs                -- 编解码模块导出
     wire.rs               -- 小端读写原语、常量定义
@@ -20,6 +21,14 @@ src/
   binary_schema.rs        -- 二进制模式加载器 (C 工具链兼容)
   rpc/
     mod.rs                -- Host, RequestSender, Responder, DispatchResult
+
+sproto-derive/            -- proc-macro crate（feature "derive" 控制）
+  src/
+    lib.rs                -- #[proc_macro_derive] 入口
+    parse.rs              -- 属性解析: #[sproto(tag = N, decimal = M)]
+    classify.rs           -- syn::Type → FieldKind 分类（Integer/Bool/String/Vec/Option/Box/Struct...）
+    encode_gen.rs         -- 生成 SprotoEncode impl（按 tag 排序，编码各字段）
+    decode_gen.rs         -- 生成 SprotoDecode impl（变量声明、match arm、struct 构建）
 
 sproto-lua/               -- Lua FFI 绑定 crate
   src/
@@ -96,6 +105,87 @@ sproto 采用基于 tag 的二进制格式。每个编码后的结构体包含�
 ```
 
 用户代码和 Lua 绑定共享同一套 wire format 引擎，消除了代码重复。
+
+## Derive API (sproto-derive)
+
+`sproto-derive` 是一个 proc-macro crate，通过 `#[derive(SprotoEncode, SprotoDecode)]` 自动为 Rust struct 生成编解码代码。
+
+### 设计原则
+
+1. **运行时 schema**: schema 在调用 `to_bytes`/`from_bytes` 时传入，不在编译时嵌入。这保持了 schema 可热更新的特性。
+2. **零开销抽象**: 生成的代码与手写 Direct API 调用结构相同，编码性能差异 <10%。
+3. **编译时字段映射**: proc-macro 解析 `#[sproto(tag = N)]` 属性，在编译时建立 field→tag 映射关系。
+
+### 代码生成流程
+
+```
+#[derive(SprotoEncode)]         #[derive(SprotoDecode)]
+        │                               │
+        ▼                               ▼
+    parse.rs                        parse.rs
+    (解析属性)                      (解析属性)
+        │                               │
+        ▼                               ▼
+   classify.rs                     classify.rs
+   (类型分类)                      (类型分类)
+        │                               │
+        ▼                               ▼
+  encode_gen.rs                   decode_gen.rs
+  (生成编码代码)                   (生成解码代码)
+```
+
+### 类型分类 (classify.rs)
+
+`classify_type()` 将 `syn::Type` 映射到 `FieldKind` 枚举：
+
+- 路径匹配: `String` → StringField, `bool` → Bool, `f64` → Double
+- 整数类型: `i64`, `i32`, `i16`, `i8`, `u32`, `u16`, `u8` → Integer
+- 容器拆包: `Option<T>` → is_optional=true + 递归分类 T
+- Box 拆包: `Box<T>` → is_boxed=true + 递归分类 T
+- Vec 分类: `Vec<u8>` → Binary, `Vec<i64>` → IntegerArray, `Vec<T>` → StructArray(T)
+- 其他类型 → NestedStruct(Type)
+
+### 编码生成 (encode_gen.rs)
+
+生成的 `SprotoEncode::sproto_encode()` 实现：
+
+1. 字段按 tag 排序（命中 StructEncoder 的快速路径）
+2. 对每个字段生成对应的 `enc.set_*()` 调用
+3. `Option<T>` 字段: `if let Some(ref __v) = self.field { ... }`
+4. `Vec<T>` 字段: `if !self.field.is_empty() { ... }` 跳过空数组
+5. 嵌套结构体: `enc.encode_nested(tag, |sub| self.field.sproto_encode(sub))`
+
+### 解码生成 (decode_gen.rs)
+
+生成的 `SprotoDecode::sproto_decode()` 实现：
+
+1. 为每个字段声明带默认值的 `let mut` 变量
+2. 循环 `dec.next_field()` 并 match tag
+3. 每个 tag 调用对应的 `field.as_*()` 方法赋值
+4. 构造并返回 struct
+
+### 分层关系
+
+```
+  ┌───────────────────┐
+  │  Derive API        │
+  │  to_bytes/from_bytes│
+  └─────────┬─────────┘
+            │ 调用
+            ▼
+  ┌───────────────────┐
+  │  Direct API        │
+  │ StructEncoder/Decoder│
+  └─────────┬─────────┘
+            │ 操作
+            ▼
+  ┌───────────────────┐
+  │  Wire Format       │
+  │  (codec/wire.rs)   │
+  └───────────────────┘
+```
+
+Derive API 是 Direct API 的薄封装层，生成的代码直接调用 StructEncoder/StructDecoder 方法。
 
 ## Builder API
 

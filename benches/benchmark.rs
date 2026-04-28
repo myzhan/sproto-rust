@@ -2,9 +2,10 @@
 //!
 //! Usage:
 //!   cargo build --release --example benchmark
-//!   ./target/release/examples/benchmark [--count N] [--mode MODE]
+//!   ./target/release/examples/benchmark [--count N] [--mode MODE] [--api API]
 //!
 //! Modes: encode, decode, encode_pack, unpack_decode
+//! APIs:  direct, derive
 
 use std::hint::black_box;
 use std::time::Instant;
@@ -12,7 +13,7 @@ use std::time::Instant;
 use sproto::codec::{StructDecoder, StructEncoder};
 use sproto::pack;
 use sproto::types::{Field, FieldType, SprotoType};
-use sproto::Sproto;
+use sproto::{Sproto, SprotoDecode, SprotoEncode};
 
 // ============================================================================
 // Schema Creation
@@ -236,6 +237,121 @@ fn decode_addressbook(schema: &Sproto, st: &SprotoType, data: &[u8]) -> usize {
 }
 
 // ============================================================================
+// Derive API Structs
+// ============================================================================
+
+#[derive(SprotoEncode, SprotoDecode, Clone)]
+struct PhoneNumberDerive {
+    #[sproto(tag = 0)]
+    number: String,
+    #[sproto(tag = 1)]
+    r#type: i64,
+    #[sproto(tag = 2)]
+    real: f64,
+}
+
+#[derive(SprotoEncode, SprotoDecode, Clone)]
+struct PersonDerive {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    id: i64,
+    #[sproto(tag = 2)]
+    email: String,
+    #[sproto(tag = 3)]
+    phone: Vec<PhoneNumberDerive>,
+}
+
+#[derive(SprotoEncode, SprotoDecode, Clone)]
+struct HumanDerive {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    age: i64,
+    #[sproto(tag = 2)]
+    marital: bool,
+    #[sproto(tag = 3)]
+    children: Vec<HumanDerive>,
+}
+
+#[derive(SprotoEncode, SprotoDecode, Clone)]
+struct AddressBookDerive {
+    #[sproto(tag = 0)]
+    person: Vec<PersonDerive>,
+    #[sproto(tag = 1)]
+    human: Vec<HumanDerive>,
+}
+
+fn create_addressbook_value() -> AddressBookDerive {
+    AddressBookDerive {
+        person: vec![
+            PersonDerive {
+                name: "Alice".to_string(),
+                id: 10000,
+                email: String::new(),
+                phone: vec![
+                    PhoneNumberDerive {
+                        number: "123456789".to_string(),
+                        r#type: 1,
+                        real: 1.234567,
+                    },
+                    PhoneNumberDerive {
+                        number: "87654321".to_string(),
+                        r#type: 2,
+                        real: 5567.12345,
+                    },
+                ],
+            },
+            PersonDerive {
+                name: "Bob".to_string(),
+                id: 20000,
+                email: String::new(),
+                phone: vec![PhoneNumberDerive {
+                    number: "01234567890".to_string(),
+                    r#type: 3,
+                    real: 567.1378,
+                }],
+            },
+        ],
+        human: vec![
+            HumanDerive {
+                name: "kkkk".to_string(),
+                age: 11,
+                marital: true,
+                children: vec![],
+            },
+            HumanDerive {
+                name: "dddd".to_string(),
+                age: 22,
+                marital: false,
+                children: vec![
+                    HumanDerive {
+                        name: "cccc".to_string(),
+                        age: 33,
+                        marital: false,
+                        children: vec![],
+                    },
+                    HumanDerive {
+                        name: "ffff".to_string(),
+                        age: 44,
+                        marital: false,
+                        children: vec![],
+                    },
+                ],
+            },
+        ],
+    }
+}
+
+fn encode_addressbook_derive(schema: &Sproto, value: &AddressBookDerive) -> Vec<u8> {
+    sproto::to_bytes(schema, "AddressBook", value).unwrap()
+}
+
+fn decode_addressbook_derive(schema: &Sproto, data: &[u8]) -> AddressBookDerive {
+    sproto::from_bytes::<AddressBookDerive>(schema, "AddressBook", data).unwrap()
+}
+
+// ============================================================================
 // Benchmark Functions
 // ============================================================================
 
@@ -262,6 +378,32 @@ fn bench_ab_unpack_decode(schema: &Sproto, st: &SprotoType, packed: &[u8], count
     for _ in 0..count {
         let unpacked = pack::unpack(packed).unwrap();
         let _ = black_box(decode_addressbook(schema, st, &unpacked));
+    }
+}
+
+fn bench_derive_encode(schema: &Sproto, value: &AddressBookDerive, count: usize) {
+    for _ in 0..count {
+        let _ = black_box(encode_addressbook_derive(schema, black_box(value)));
+    }
+}
+
+fn bench_derive_decode(schema: &Sproto, data: &[u8], count: usize) {
+    for _ in 0..count {
+        let _ = black_box(decode_addressbook_derive(schema, black_box(data)));
+    }
+}
+
+fn bench_derive_encode_pack(schema: &Sproto, value: &AddressBookDerive, count: usize) {
+    for _ in 0..count {
+        let encoded = encode_addressbook_derive(schema, value);
+        let _ = black_box(pack::pack(&encoded));
+    }
+}
+
+fn bench_derive_unpack_decode(schema: &Sproto, packed: &[u8], count: usize) {
+    for _ in 0..count {
+        let unpacked = pack::unpack(packed).unwrap();
+        let _ = black_box(decode_addressbook_derive(schema, &unpacked));
     }
 }
 
@@ -307,6 +449,8 @@ fn print_usage() {
     eprintln!("  --count N              Iteration count (default: 1000000)");
     eprintln!("  --mode MODE            Benchmark mode (default: encode_pack)");
     eprintln!("                         encode, decode, encode_pack, unpack_decode");
+    eprintln!("  --api API              API to benchmark (default: direct)");
+    eprintln!("                         direct, derive");
 }
 
 // ============================================================================
@@ -325,6 +469,7 @@ fn main() {
         .parse()
         .expect("--count must be a positive integer");
     let mode = parse_arg(&args, "--mode", "encode_pack");
+    let api = parse_arg(&args, "--api", "direct");
 
     // Validate arguments
     if !["encode", "decode", "encode_pack", "unpack_decode"].contains(&mode.as_str()) {
@@ -332,6 +477,10 @@ fn main() {
             "Unknown --mode: {}. Use: encode, decode, encode_pack, unpack_decode",
             mode
         );
+        std::process::exit(1);
+    }
+    if !["direct", "derive"].contains(&api.as_str()) {
+        eprintln!("Unknown --api: {}. Use: direct, derive", api);
         std::process::exit(1);
     }
 
@@ -344,17 +493,35 @@ fn main() {
     let person_count = decode_addressbook(&schema, st, &encoded);
     assert_eq!(person_count, 2, "roundtrip failed");
 
+    let ab_value = create_addressbook_value();
+    let derive_encoded = encode_addressbook_derive(&schema, &ab_value);
+    let derive_packed = pack::pack(&derive_encoded);
+
     eprintln!(
         "AddressBook: encoded {} bytes, packed {} bytes",
         encoded.len(),
         packed.len()
     );
 
-    run_benchmark("direct", &mode, count, || match mode.as_str() {
-        "encode" => bench_ab_encode(&schema, st, count),
-        "decode" => bench_ab_decode(&schema, st, &encoded, count),
-        "encode_pack" => bench_ab_encode_pack(&schema, st, count),
-        "unpack_decode" => bench_ab_unpack_decode(&schema, st, &packed, count),
+    match api.as_str() {
+        "direct" => {
+            run_benchmark("direct", &mode, count, || match mode.as_str() {
+                "encode" => bench_ab_encode(&schema, st, count),
+                "decode" => bench_ab_decode(&schema, st, &encoded, count),
+                "encode_pack" => bench_ab_encode_pack(&schema, st, count),
+                "unpack_decode" => bench_ab_unpack_decode(&schema, st, &packed, count),
+                _ => unreachable!(),
+            });
+        }
+        "derive" => {
+            run_benchmark("derive", &mode, count, || match mode.as_str() {
+                "encode" => bench_derive_encode(&schema, &ab_value, count),
+                "decode" => bench_derive_decode(&schema, &derive_encoded, count),
+                "encode_pack" => bench_derive_encode_pack(&schema, &ab_value, count),
+                "unpack_decode" => bench_derive_unpack_decode(&schema, &derive_packed, count),
+                _ => unreachable!(),
+            });
+        }
         _ => unreachable!(),
-    });
+    }
 }

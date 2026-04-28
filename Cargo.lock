@@ -574,7 +574,17 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "pretty_assertions",
+ "sproto-derive",
  "thiserror",
+]
+
+[[package]]
+name = "sproto-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

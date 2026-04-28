@@ -263,12 +263,10 @@ fn decode_array_field(lua: &Lua, f: &DecodedField) -> LuaResult<LuaValue> {
         FieldType::Struct(_) => {
             let iter = f.as_struct_iter().map_err(decode_error_to_lua)?;
             let table = lua.create_table()?;
-            let mut idx = 1i64;
-            for elem_result in iter {
+            for (idx, elem_result) in (1i64..).zip(iter) {
                 let sub_dec = elem_result.map_err(decode_error_to_lua)?;
                 let sub_table = lua_decode_fields(lua, sub_dec)?;
                 table.set(idx, sub_table)?;
-                idx += 1;
             }
             Ok(LuaValue::Table(table))
         }

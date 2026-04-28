@@ -6,9 +6,10 @@ Sproto is a compact, schema-driven serialization format designed for simplicity 
 
 ## Features
 
+- **Derive API** - `#[derive(SprotoEncode, SprotoDecode)]` for struct serialization with `to_bytes`/`from_bytes`
+- **Direct API** - Tag-based `StructEncoder`/`StructDecoder` for field-by-field encoding/decoding
 - **Binary schema loader** - Load pre-compiled binary schemas from C/Lua toolchain
 - **Builder API** - Programmatic schema construction in pure Rust
-- **Direct API** - Tag-based `StructEncoder`/`StructDecoder` for field-by-field encoding/decoding
 - **Pack/Unpack** - Zero-packing compression for wire efficiency
 - **RPC** - Request/response dispatch with session tracking
 - **Lua binding** - `sproto-lua` crate exposes the Rust implementation as a Lua C module
@@ -22,7 +23,64 @@ Add to your `Cargo.toml`:
 sproto = "0.1"
 ```
 
+The `derive` feature is enabled by default. To use only the Direct API without proc-macro dependencies:
+
+```toml
+[dependencies]
+sproto = { version = "0.1", default-features = false }
+```
+
 ## Quick Start
+
+### Derive API (Recommended)
+
+The simplest way to use sproto — derive macros for struct serialization:
+
+```rust
+use sproto::{SprotoEncode, SprotoDecode};
+use sproto::types::{Sproto, Field, FieldType};
+
+#[derive(SprotoEncode, SprotoDecode)]
+struct Person {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    age: i64,
+    #[sproto(tag = 2)]
+    active: bool,
+}
+
+// Build or load schema
+let mut schema = Sproto::new();
+schema.add_type("Person", vec![
+    Field::new("name",   0, FieldType::String),
+    Field::new("age",    1, FieldType::Integer),
+    Field::new("active", 2, FieldType::Boolean),
+]);
+
+// Encode
+let person = Person { name: "Alice".into(), age: 30, active: true };
+let bytes = sproto::to_bytes(&schema, "Person", &person).unwrap();
+
+// Decode
+let decoded: Person = sproto::from_bytes(&schema, "Person", &bytes).unwrap();
+assert_eq!(decoded.name, "Alice");
+```
+
+Supported field types:
+
+| Rust Type | Sproto Type | Attribute |
+|-----------|-------------|-----------|
+| `i64`, `i32`, `i16`, `i8`, `u32`, `u16`, `u8` | `integer` | `#[sproto(tag = N)]` |
+| `bool` | `boolean` | `#[sproto(tag = N)]` |
+| `f64` | `double` | `#[sproto(tag = N)]` |
+| `f64` (decimal) | `integer(N)` | `#[sproto(tag = N, decimal = M)]` |
+| `String` | `string` | `#[sproto(tag = N)]` |
+| `Vec<u8>` | `binary` | `#[sproto(tag = N)]` |
+| `Vec<T>` | `*type` | `#[sproto(tag = N)]` |
+| `Option<T>` | optional field | `#[sproto(tag = N)]` |
+| `Box<T>` | nested struct | `#[sproto(tag = N)]` |
+| Struct with derive | `.Type` | `#[sproto(tag = N)]` |
 
 ### Building Schema in Rust
 

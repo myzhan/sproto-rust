@@ -9,7 +9,136 @@
 sproto = "0.1"
 ```
 
-无可选 feature，直接使用全部功能。
+默认启用 `derive` feature，提供 `#[derive(SprotoEncode, SprotoDecode)]` 宏和 `to_bytes`/`from_bytes` 便捷函数。
+
+若只需 Direct API（无 proc-macro 依赖）：
+
+```toml
+[dependencies]
+sproto = { version = "0.1", default-features = false }
+```
+
+## Derive API（推荐）
+
+最简洁的使用方式——通过 derive 宏自动实现 struct 序列化/反序列化：
+
+```rust
+use sproto::{SprotoEncode, SprotoDecode};
+use sproto::types::{Sproto, Field, FieldType};
+
+#[derive(SprotoEncode, SprotoDecode)]
+struct Person {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    age: i64,
+    #[sproto(tag = 2)]
+    active: bool,
+}
+
+// 构建或加载 schema
+let mut schema = Sproto::new();
+schema.add_type("Person", vec![
+    Field::new("name",   0, FieldType::String),
+    Field::new("age",    1, FieldType::Integer),
+    Field::new("active", 2, FieldType::Boolean),
+]);
+
+// 编码
+let person = Person { name: "Alice".into(), age: 30, active: true };
+let bytes = sproto::to_bytes(&schema, "Person", &person).unwrap();
+
+// 解码
+let decoded: Person = sproto::from_bytes(&schema, "Person", &bytes).unwrap();
+assert_eq!(decoded.name, "Alice");
+```
+
+### 支持的字段类型
+
+| Rust 类型 | Sproto 类型 | 属性 |
+|-----------|-------------|------|
+| `i64`, `i32`, `i16`, `i8`, `u32`, `u16`, `u8` | `integer` | `#[sproto(tag = N)]` |
+| `bool` | `boolean` | `#[sproto(tag = N)]` |
+| `f64` | `double` | `#[sproto(tag = N)]` |
+| `String` | `string` | `#[sproto(tag = N)]` |
+| `Vec<u8>` | `binary` | `#[sproto(tag = N)]` |
+| `Vec<i64>`, `Vec<i32>`, ... | `*integer` | `#[sproto(tag = N)]` |
+| `Vec<bool>` | `*boolean` | `#[sproto(tag = N)]` |
+| `Vec<f64>` | `*double` | `#[sproto(tag = N)]` |
+| `Vec<String>` | `*string` | `#[sproto(tag = N)]` |
+| `Vec<Vec<u8>>` | `*binary` | `#[sproto(tag = N)]` |
+| `Vec<T>` (T 为 derive struct) | `*Type` | `#[sproto(tag = N)]` |
+| `Option<T>` | 可选字段 | `#[sproto(tag = N)]` |
+| `Box<T>` | 嵌套结构体 | `#[sproto(tag = N)]` |
+| Derive struct | `.Type` | `#[sproto(tag = N)]` |
+
+### 定点小数
+
+```rust
+#[derive(SprotoEncode, SprotoDecode)]
+struct Price {
+    #[sproto(tag = 0, decimal = 2)]  // 精度 10^2 = 100
+    amount: f64,
+}
+```
+
+`decimal = N` 表示值在线格式中以 `integer(N)` 传输，编码时乘以 10^N，解码时除以 10^N。
+
+### Optional 字段
+
+`Option<T>` 字段在值为 `None` 时不编码，解码时若字段缺失则为 `None`：
+
+```rust
+#[derive(SprotoEncode, SprotoDecode)]
+struct UserProfile {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    email: Option<String>,     // 可选
+    #[sproto(tag = 2)]
+    age: Option<i64>,          // 可选
+}
+```
+
+### 嵌套结构体
+
+```rust
+#[derive(SprotoEncode, SprotoDecode)]
+struct PhoneNumber {
+    #[sproto(tag = 0)]
+    number: String,
+    #[sproto(tag = 1)]
+    r#type: i64,
+}
+
+#[derive(SprotoEncode, SprotoDecode)]
+struct Contact {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    phone: PhoneNumber,              // 嵌套结构体
+    #[sproto(tag = 2)]
+    friends: Vec<Contact>,           // 结构体数组（支持递归）
+    #[sproto(tag = 3)]
+    parent: Option<Box<Contact>>,    // 可选 Box 嵌套（递归类型需要 Box）
+}
+```
+
+### 完整管线（编码 + 压缩 + 解压 + 解码）
+
+```rust
+use sproto::pack;
+
+// 发送端
+let person = Person { name: "Alice".into(), age: 30, active: true };
+let encoded = sproto::to_bytes(&schema, "Person", &person).unwrap();
+let packed = pack::pack(&encoded);
+// ... 发送 packed 数据 ...
+
+// 接收端
+let unpacked = pack::unpack(&packed).unwrap();
+let decoded: Person = sproto::from_bytes(&schema, "Person", &unpacked).unwrap();
+```
 
 ## 构建模式 (Schema)
 

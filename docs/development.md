@@ -4,11 +4,12 @@
 
 ```
 sproto-rust/
-  Cargo.toml                -- 主 crate 配置
+  Cargo.toml                -- 主 crate 配置（features: derive）
   src/                      -- 核心库源码
     lib.rs                  -- 公共 API 导出
     error.rs                -- 错误类型定义
     types.rs                -- 模式元数据类型 + Builder API
+    derive_traits.rs        -- SprotoEncode/SprotoDecode trait + to_bytes/from_bytes
     codec/                  -- 编解码模块
       mod.rs                -- 模块导出: StructEncoder, StructDecoder, DecodedField
       wire.rs               -- 小端读写原语、常量
@@ -18,6 +19,14 @@ sproto-rust/
     binary_schema.rs        -- 二进制模式加载
     rpc/                    -- RPC 模块
       mod.rs
+  sproto-derive/            -- proc-macro crate
+    Cargo.toml
+    src/
+      lib.rs                -- #[derive(SprotoEncode, SprotoDecode)] 入口
+      parse.rs              -- #[sproto(tag = N, decimal = M)] 属性解析
+      classify.rs           -- Rust 类型 → wire kind 分类
+      encode_gen.rs         -- SprotoEncode impl 代码生成
+      decode_gen.rs         -- SprotoDecode impl 代码生成
   sproto-lua/               -- Lua FFI 绑定 crate
     Cargo.toml
     src/
@@ -27,6 +36,7 @@ sproto-rust/
       error.rs              -- 错误转换
   tests/                    -- 集成测试
     direct_tests.rs         -- StructEncoder/StructDecoder 编解码测试（含 C 二进制对比）
+    derive_tests.rs         -- Derive API roundtrip、fixture 解码、编解码一致性
     pack_tests.rs           -- pack/unpack 压缩测试
     binary_schema_tests.rs  -- 二进制模式加载测试
     rpc_tests.rs            -- RPC 功能测试
@@ -35,9 +45,9 @@ sproto-rust/
       build.sh              -- 构建脚本（需要 Lua 5.3+ 和 C sproto）
       *.bin                 -- 各种编码/打包/模式的二进制文件
   benches/                  -- 基准测试
-    sproto_bench.rs         -- criterion 微基准测试
-    benchmark.rs            -- 跨语言对比基准（cargo example）
-    benchall.sh             -- 自动化 Rust/Go 对比测试脚本
+    sproto_bench.rs         -- criterion 微基准测试（含 derive vs direct 对比）
+    benchmark.rs            -- 跨语言对比基准（cargo example, --api=direct|derive）
+    benchall.sh             -- 自动化 Rust (direct+derive) / Go 对比测试脚本
   docs/                     -- 项目文档
 ```
 
@@ -75,10 +85,22 @@ codegen-units = 1
 
 ```toml
 [workspace]
-members = ["sproto-lua"]
+members = ["sproto-lua", "sproto-derive"]
 ```
 
+- `sproto-derive`: proc-macro crate，提供 `#[derive(SprotoEncode, SprotoDecode)]`
 - `sproto-lua`: Lua FFI 绑定，将 Rust 实现暴露为 Lua 可加载模块
+
+### Feature Flags
+
+```toml
+[features]
+default = ["derive"]
+derive = ["dep:sproto-derive"]
+```
+
+- `derive` (默认启用): 引入 sproto-derive proc-macro 依赖，导出 `SprotoEncode`/`SprotoDecode` trait 和 `to_bytes`/`from_bytes` 函数
+- 禁用 derive: `cargo build --no-default-features`，仅 Direct API 可用
 
 ## 运行测试
 
@@ -104,10 +126,11 @@ cargo test -- --nocapture
 |---------|------|------|------|
 | 单元测试 | src/ 各模块内 | 29 | 组件级测试（线格式读写、pack/unpack、RPC header、StructEncoder/StructDecoder 往返等） |
 | Direct 测试 | direct_tests.rs | 50 | StructEncoder/StructDecoder 编解码，含 C 生成二进制对比 |
+| Derive 测试 | derive_tests.rs | 25 | Derive API roundtrip、fixture 解码、编解码一致性 |
 | 压缩测试 | pack_tests.rs | 24 | pack/unpack 交叉验证 |
 | 二进制模式 | binary_schema_tests.rs | 2 | 加载 C 生成的 .bin 模式 |
 | RPC 测试 | rpc_tests.rs | 15 | RPC 功能（dispatch、session、协议配置、错误处理） |
-| **合计** | | **120** | 全部通过 |
+| **合计** | | **145** | 全部通过 |
 
 ### 测试策略
 
@@ -149,33 +172,38 @@ cargo bench --bench sproto_bench -- pack
 ```
 
 基准测试文件位于 `benches/sproto_bench.rs`，覆盖：
-- encode / decode（StructEncoder/StructDecoder API）
+- encode / decode（Direct API: StructEncoder/StructDecoder）
+- derive_encode / derive_decode（Derive API: to_bytes/from_bytes）
 - pack / unpack
 - 不同数据复杂度的消息（简单 Person、复杂 UserProfile、大数组 DataSet）
 
 ### 跨语言基准测试
 
-`benches/benchmark.rs` 是一个 cargo example，支持与 Go 实现对比：
+`benches/benchmark.rs` 是一个 cargo example，支持 Direct API 和 Derive API 与 Go 实现对比：
 
 ```bash
 # 构建并运行 Rust 基准
 cargo build --release --example benchmark
-./target/release/examples/benchmark --count=1000000 --mode=encode
+./target/release/examples/benchmark --count=1000000 --mode=encode --api=direct
+./target/release/examples/benchmark --count=1000000 --mode=encode --api=derive
 
 # 可用参数:
 #   --count=N        迭代次数
 #   --mode=MODE      encode | decode | encode_pack | unpack_decode
+#   --api=API        direct | derive
 ```
 
 ### 自动化对比脚本
 
 ```bash
-# 运行 Rust + Go 完整对比（需要 Go 环境和 gosproto 项目）
+# 运行 Rust (direct+derive) + Go 完整对比（需要 Go 环境和 gosproto 项目）
 bash benches/benchall.sh 1000000
 
 # 仅运行 Rust 部分
 bash benches/benchall.sh
 ```
+
+脚本输出包含 Direct vs Derive 性能对比表以及跨语言（Go reflect/codec vs Rust direct/derive）对比表。
 
 ## 代码检查
 
@@ -197,6 +225,12 @@ make ci
 
 ### 运行时依赖
 - `thiserror`: 错误类型派生
+- `sproto-derive` (可选, feature "derive"): proc-macro 代码生成
+
+### sproto-derive 依赖
+- `syn 2`: Rust 语法解析
+- `quote 1`: 代码生成
+- `proc-macro2 1`: proc-macro 基础设施
 
 ### 开发依赖
 - `pretty_assertions`: 可读性更好的测试失败输出
