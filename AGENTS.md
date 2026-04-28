@@ -164,12 +164,13 @@ Nested struct encoding writes a length placeholder, encodes the child struct int
 
 After every code modification, you MUST:
 
-1. **Run tests**: `cargo test --workspace` — all tests must pass
+1. **Format code**: `cargo fmt --all` then `cargo fmt -- --check` — no formatting diff allowed
 2. **Run clippy**: `cargo clippy --workspace -- -D warnings` — no warnings allowed
-3. **Update documentation**: If the change affects public API, features, project structure, or behavior, update the relevant documentation files:
+3. **Run tests**: `cargo test --workspace` — all tests must pass
+4. **Update documentation**: If the change affects public API, features, project structure, or behavior, update the relevant documentation files:
    - `README.md` — user-facing feature list and examples
    - `AGENTS.md` — repository structure, API descriptions, test organization
    - `docs/usage.md` — usage examples and type mappings
    - `docs/design.md` — architecture and design decisions
    - `docs/development.md` — project structure, workspace members, test counts, benchmark commands
-4. **Verify no-default-features**: If feature-gated code is changed, ensure `cargo build --no-default-features` still compiles
+5. **Verify no-default-features**: If feature-gated code is changed, ensure `cargo build --no-default-features` still compiles

@@ -47,10 +47,7 @@ pub fn generate(input: &DeriveInput) -> syn::Result<TokenStream> {
     // Sort by tag for optimal in-order encoding
     field_infos.sort_by_key(|f| f.tag);
 
-    let encode_stmts: Vec<TokenStream> = field_infos
-        .iter()
-        .map(gen_encode_field)
-        .collect();
+    let encode_stmts: Vec<TokenStream> = field_infos.iter().map(gen_encode_field).collect();
 
     let expanded = quote! {
         impl #impl_generics ::sproto::SprotoEncode for #struct_name #ty_generics #where_clause {

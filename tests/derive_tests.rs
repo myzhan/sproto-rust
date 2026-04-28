@@ -313,7 +313,10 @@ fn test_derive_big_integer_array() {
     let bytes = to_bytes(&schema, "Person", &person).unwrap();
     let decoded: Person = from_bytes(&schema, "Person", &bytes).unwrap();
 
-    assert_eq!(decoded.numbers, vec![(1 << 32) + 1, (1 << 32) + 2, (1 << 32) + 3]);
+    assert_eq!(
+        decoded.numbers,
+        vec![(1 << 32) + 1, (1 << 32) + 2, (1 << 32) + 3]
+    );
 }
 
 #[test]

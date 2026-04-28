@@ -45,12 +45,8 @@ pub fn parse_field_attrs(attrs: &[Attribute]) -> syn::Result<FieldAttrs> {
         })?;
     }
 
-    let tag = tag.ok_or_else(|| {
-        syn::Error::new_spanned(
-            &attrs[0],
-            "missing `tag` in #[sproto(tag = N)]",
-        )
-    })?;
+    let tag = tag
+        .ok_or_else(|| syn::Error::new_spanned(&attrs[0], "missing `tag` in #[sproto(tag = N)]"))?;
 
     Ok(FieldAttrs { tag, decimal })
 }

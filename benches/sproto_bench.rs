@@ -320,7 +320,9 @@ fn bench_derive_encode(c: &mut Criterion) {
     };
     group.throughput(Throughput::Elements(1));
     group.bench_function("person", |b| {
-        b.iter(|| sproto::to_bytes(black_box(&person_sproto), "Person", black_box(&person)).unwrap())
+        b.iter(|| {
+            sproto::to_bytes(black_box(&person_sproto), "Person", black_box(&person)).unwrap()
+        })
     });
 
     let user_sproto = create_user_profile_schema();
