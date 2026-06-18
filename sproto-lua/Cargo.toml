@@ -8,5 +8,5 @@ description = "Lua bindings for sproto-rust"
 crate-type = ["cdylib"]
 
 [dependencies]
-sproto = { path = "..", default-features = false }
+sproto = { package = "sproto-rust", path = "..", default-features = false }
 mlua = { version = "0.10", features = ["lua54", "module"] }
