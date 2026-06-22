@@ -1,18 +1,10 @@
 [package]
-name = "sproto-rust"
+name = "sproto"
 version = "0.1.0"
 edition = "2021"
 description = "Rust implementation of the sproto binary serialization protocol"
-license = "MIT"
-repository = "https://github.com/myzhan/sproto-rust"
-authors = ["myzhan <scau.myzhan@gmail.com>"]
-keywords = ["sproto", "serialization", "binary", "protocol"]
-categories = ["encoding", "parser-implementations"]
 autobenches = false
 autoexamples = false
-
-[lib]
-name = "sproto"
 
 [features]
 default = ["derive"]
@@ -20,7 +12,7 @@ derive = ["dep:sproto-derive"]
 
 [dependencies]
 thiserror = "2"
-sproto-derive = { version = "0.1.0", path = "sproto-derive", optional = true }
+sproto-derive = { path = "sproto-derive", optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1"

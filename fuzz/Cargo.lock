@@ -81,9 +81,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.45"
+version = "1.0.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
+checksum = "dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368"
 dependencies = [
  "proc-macro2",
 ]
@@ -101,6 +101,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sproto"
+version = "0.1.0"
+dependencies = [
+ "sproto-derive",
+ "thiserror",
+]
+
+[[package]]
 name = "sproto-derive"
 version = "0.1.0"
 dependencies = [
@@ -115,15 +123,7 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "libfuzzer-sys",
- "sproto-rust",
-]
-
-[[package]]
-name = "sproto-rust"
-version = "0.1.0"
-dependencies = [
- "sproto-derive",
- "thiserror",
+ "sproto",
 ]
 
 [[package]]

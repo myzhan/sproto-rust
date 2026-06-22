@@ -25,8 +25,8 @@ src/
 sproto-derive/            -- proc-macro crate（feature "derive" 控制）
   src/
     lib.rs                -- #[proc_macro_derive] 入口
-    parse.rs              -- 属性解析: #[sproto(tag = N, decimal = M)]
-    classify.rs           -- syn::Type → FieldKind 分类（Integer/Bool/String/Vec/Option/Box/Struct...）
+    parse.rs              -- 属性解析: #[sproto(tag, decimal, key, value, key_field)]
+    classify.rs           -- syn::Type → FieldKind 分类（Integer/Bool/String/Vec/HashMap/Option/Box/Struct...）
     encode_gen.rs         -- 生成 SprotoEncode impl（按 tag 排序，编码各字段）
     decode_gen.rs         -- 生成 SprotoDecode impl（变量声明、match arm、struct 构建）
 
@@ -142,6 +142,7 @@ sproto 采用基于 tag 的二进制格式。每个编码后的结构体包含�
 - 整数类型: `i64`, `i32`, `i16`, `i8`, `u32`, `u16`, `u8` → Integer
 - 容器拆包: `Option<T>` → is_optional=true + 递归分类 T
 - Box 拆包: `Box<T>` → is_boxed=true + 递归分类 T
+- HashMap 分类: `HashMap<K, V>` + `value` 属性 → AnonymousMap, `HashMap<K, V>` + `key` 属性 → IndexedMap
 - Vec 分类: `Vec<u8>` → Binary, `Vec<i64>` → IntegerArray, `Vec<T>` → StructArray(T)
 - 其他类型 → NestedStruct(Type)
 
@@ -153,7 +154,9 @@ sproto 采用基于 tag 的二进制格式。每个编码后的结构体包含�
 2. 对每个字段生成对应的 `enc.set_*()` 调用
 3. `Option<T>` 字段: `if let Some(ref __v) = self.field { ... }`
 4. `Vec<T>` 字段: `if !self.field.is_empty() { ... }` 跳过空数组
-5. 嵌套结构体: `enc.encode_nested(tag, |sub| self.field.sproto_encode(sub))`
+5. `HashMap<K, V>` 索引 map: 遍历 `.values()` 编码为 struct array（struct 自带 key 字段）
+6. `HashMap<K, V>` 匿名 map: 遍历 entries，每对 (k,v) 编码为两字段 struct
+7. 嵌套结构体: `enc.encode_nested(tag, |sub| self.field.sproto_encode(sub))`
 
 ### 解码生成 (decode_gen.rs)
 
@@ -162,7 +165,9 @@ sproto 采用基于 tag 的二进制格式。每个编码后的结构体包含�
 1. 为每个字段声明带默认值的 `let mut` 变量
 2. 循环 `dec.next_field()` 并 match tag
 3. 每个 tag 调用对应的 `field.as_*()` 方法赋值
-4. 构造并返回 struct
+4. `HashMap` 索引 map: 解码为 struct 后通过 `item.{key_field}` 提取 key 插入 HashMap
+5. `HashMap` 匿名 map: 遍历 struct array 元素，按 key_tag/value_tag 提取原始字段插入 HashMap
+6. 构造并返回 struct
 
 ### 分层关系
 
@@ -268,6 +273,8 @@ RPC 模块实现 sproto RPC 模式，操作原始字节（不绑定特定编解�
 | `binary` | `Vec<u8>` / `&[u8]` | 长度前缀字节 |
 | `double` | `f64` | 8 字节 IEEE 754 |
 | `*type` | `Vec<T>` | 元素前缀数组 |
+| `*type(key)` | `HashMap<K, Struct>` | 元素前缀数组（线上同 `*type`） |
+| `*type()` | `HashMap<K, V>` | 元素前缀数组（线上同 `*type`） |
 | `.Type` | 嵌套结构体 | tag-based 结构 |
 
 ## 线格式兼容性

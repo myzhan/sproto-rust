@@ -3,9 +3,6 @@ name = "sproto-derive"
 version = "0.1.0"
 edition = "2021"
 description = "Derive macros for sproto serialization"
-license = "MIT"
-repository = "https://github.com/myzhan/sproto-rust"
-authors = ["myzhan <scau.myzhan@gmail.com>"]
 
 [lib]
 proc-macro = true

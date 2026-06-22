@@ -2,6 +2,7 @@
 
 use sproto::types::{Field, FieldType, Sproto};
 use sproto::{from_bytes, to_bytes, SprotoDecode, SprotoEncode};
+use std::collections::HashMap;
 
 // ============================================================================
 // Test Schema Setup
@@ -634,4 +635,256 @@ fn test_derive_unknown_type_error() {
 
     let result = to_bytes(&schema, "Unknown", &person);
     assert!(result.is_err());
+}
+
+// ============================================================================
+// Map Tests — *Type(key) indexed map and *Type() anonymous map
+// ============================================================================
+
+fn create_map_schema() -> Sproto {
+    let mut s = Sproto::new();
+    // PhoneNumber: number(tag=0, string), type(tag=1, integer)
+    let phone_idx = s.add_type(
+        "PhoneNumber",
+        vec![
+            Field::new("number", 0, FieldType::String),
+            Field::new("type", 1, FieldType::Integer),
+        ],
+    );
+    // Person: name(tag=0), id(tag=1)
+    let person_idx = s.add_type(
+        "Person",
+        vec![
+            Field::new("name", 0, FieldType::String),
+            Field::new("id", 1, FieldType::Integer),
+        ],
+    );
+    // AddressBook: person(tag=0, *Person(id)), phonemap(tag=1, *PhoneNumber())
+    let mut person_field = Field::array("person", 0, FieldType::Struct(person_idx));
+    person_field.key_tag = 1; // key is Person.id
+    let mut phonemap_field = Field::array("phonemap", 1, FieldType::Struct(phone_idx));
+    phonemap_field.key_tag = 0; // key is PhoneNumber.number
+    phonemap_field.is_map = true;
+    s.add_type("AddressBook", vec![person_field, phonemap_field]);
+    s
+}
+
+#[derive(Debug, PartialEq, Clone, Default, SprotoEncode, SprotoDecode)]
+struct MapPerson {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    id: i64,
+}
+
+#[derive(Debug, PartialEq, Clone, Default, SprotoEncode, SprotoDecode)]
+struct MapAddressBook {
+    #[sproto(tag = 0, key = 1, key_field = "id")]
+    person: HashMap<i64, MapPerson>,
+    #[sproto(tag = 1, key = 0, value = 1)]
+    phonemap: HashMap<String, i64>,
+}
+
+#[test]
+fn test_derive_indexed_map_roundtrip() {
+    let schema = create_map_schema();
+
+    let mut person_map = HashMap::new();
+    person_map.insert(
+        10000,
+        MapPerson {
+            name: "Alice".into(),
+            id: 10000,
+        },
+    );
+    person_map.insert(
+        20000,
+        MapPerson {
+            name: "Bob".into(),
+            id: 20000,
+        },
+    );
+
+    let book = MapAddressBook {
+        person: person_map,
+        phonemap: HashMap::new(),
+    };
+
+    let bytes = to_bytes(&schema, "AddressBook", &book).unwrap();
+    let decoded: MapAddressBook = from_bytes(&schema, "AddressBook", &bytes).unwrap();
+
+    assert_eq!(decoded.person.len(), 2);
+    assert_eq!(decoded.person[&10000].name, "Alice");
+    assert_eq!(decoded.person[&20000].name, "Bob");
+}
+
+#[test]
+fn test_derive_anonymous_map_roundtrip() {
+    let schema = create_map_schema();
+
+    let mut phonemap = HashMap::new();
+    phonemap.insert("123456789".to_string(), 1i64);
+    phonemap.insert("87654321".to_string(), 2i64);
+
+    let book = MapAddressBook {
+        person: HashMap::new(),
+        phonemap,
+    };
+
+    let bytes = to_bytes(&schema, "AddressBook", &book).unwrap();
+    let decoded: MapAddressBook = from_bytes(&schema, "AddressBook", &bytes).unwrap();
+
+    assert_eq!(decoded.phonemap.len(), 2);
+    assert_eq!(decoded.phonemap["123456789"], 1);
+    assert_eq!(decoded.phonemap["87654321"], 2);
+}
+
+#[test]
+fn test_derive_both_maps_roundtrip() {
+    let schema = create_map_schema();
+
+    let mut person_map = HashMap::new();
+    person_map.insert(
+        10000,
+        MapPerson {
+            name: "Alice".into(),
+            id: 10000,
+        },
+    );
+
+    let mut phonemap = HashMap::new();
+    phonemap.insert("123456789".to_string(), 1i64);
+
+    let book = MapAddressBook {
+        person: person_map,
+        phonemap,
+    };
+
+    let bytes = to_bytes(&schema, "AddressBook", &book).unwrap();
+    let decoded: MapAddressBook = from_bytes(&schema, "AddressBook", &bytes).unwrap();
+
+    assert_eq!(decoded.person.len(), 1);
+    assert_eq!(decoded.person[&10000].name, "Alice");
+    assert_eq!(decoded.phonemap.len(), 1);
+    assert_eq!(decoded.phonemap["123456789"], 1);
+}
+
+#[test]
+fn test_derive_empty_maps() {
+    let schema = create_map_schema();
+
+    let book = MapAddressBook {
+        person: HashMap::new(),
+        phonemap: HashMap::new(),
+    };
+
+    let bytes = to_bytes(&schema, "AddressBook", &book).unwrap();
+    let decoded: MapAddressBook = from_bytes(&schema, "AddressBook", &bytes).unwrap();
+
+    assert!(decoded.person.is_empty());
+    assert!(decoded.phonemap.is_empty());
+}
+
+// ============================================================================
+// Cross-compatibility with C fixtures for maps
+// ============================================================================
+
+#[derive(Debug, PartialEq, Clone, Default, SprotoEncode, SprotoDecode)]
+struct FixtureAddressBook {
+    #[sproto(tag = 0, key = 6, key_field = "id")]
+    person: HashMap<i64, Person>,
+    #[sproto(tag = 1, key = 0, value = 1)]
+    phonemap: HashMap<String, i64>,
+}
+
+#[test]
+fn test_derive_decode_indexed_map_fixture() {
+    let schema = load_binary_schema();
+    let encoded = std::fs::read("tests/testdata/indexed_map_encoded.bin").unwrap();
+    let decoded: FixtureAddressBook = from_bytes(&schema, "AddressBook", &encoded).unwrap();
+
+    assert_eq!(decoded.person.len(), 2);
+    assert_eq!(decoded.person[&10000].name, "Alice");
+    assert_eq!(decoded.person[&10000].id, 10000);
+    assert_eq!(decoded.person[&20000].name, "Bob");
+    assert_eq!(decoded.person[&20000].id, 20000);
+}
+
+#[test]
+fn test_derive_decode_anonymous_map_fixture() {
+    let schema = load_binary_schema();
+    let encoded = std::fs::read("tests/testdata/anonymous_map_encoded.bin").unwrap();
+    let decoded: FixtureAddressBook = from_bytes(&schema, "AddressBook", &encoded).unwrap();
+
+    assert_eq!(decoded.phonemap.len(), 2);
+    assert_eq!(decoded.phonemap["123456789"], 1);
+    assert_eq!(decoded.phonemap["87654321"], 2);
+}
+
+#[test]
+fn test_derive_decode_both_maps_fixture() {
+    let schema = load_binary_schema();
+    let encoded = std::fs::read("tests/testdata/both_maps_encoded.bin").unwrap();
+    let decoded: FixtureAddressBook = from_bytes(&schema, "AddressBook", &encoded).unwrap();
+
+    assert_eq!(decoded.person.len(), 1);
+    assert_eq!(decoded.person[&10000].name, "Alice");
+    assert_eq!(decoded.phonemap.len(), 1);
+    assert_eq!(decoded.phonemap["123456789"], 1);
+}
+
+#[test]
+fn test_derive_encode_indexed_map_fixture() {
+    let schema = load_binary_schema();
+
+    let mut person_map = HashMap::new();
+    person_map.insert(
+        10000,
+        Person {
+            name: "Alice".into(),
+            id: 10000,
+            ..Default::default()
+        },
+    );
+    person_map.insert(
+        20000,
+        Person {
+            name: "Bob".into(),
+            id: 20000,
+            ..Default::default()
+        },
+    );
+
+    let book = FixtureAddressBook {
+        person: person_map,
+        phonemap: HashMap::new(),
+    };
+
+    let bytes = to_bytes(&schema, "AddressBook", &book).unwrap();
+    let decoded: FixtureAddressBook = from_bytes(&schema, "AddressBook", &bytes).unwrap();
+
+    assert_eq!(decoded.person.len(), 2);
+    assert_eq!(decoded.person[&10000].name, "Alice");
+    assert_eq!(decoded.person[&20000].name, "Bob");
+}
+
+#[test]
+fn test_derive_encode_anonymous_map_fixture() {
+    let schema = load_binary_schema();
+
+    let mut phonemap = HashMap::new();
+    phonemap.insert("123456789".to_string(), 1i64);
+    phonemap.insert("87654321".to_string(), 2i64);
+
+    let book = FixtureAddressBook {
+        person: HashMap::new(),
+        phonemap,
+    };
+
+    let bytes = to_bytes(&schema, "AddressBook", &book).unwrap();
+    let decoded: FixtureAddressBook = from_bytes(&schema, "AddressBook", &bytes).unwrap();
+
+    assert_eq!(decoded.phonemap.len(), 2);
+    assert_eq!(decoded.phonemap["123456789"], 1);
+    assert_eq!(decoded.phonemap["87654321"], 2);
 }

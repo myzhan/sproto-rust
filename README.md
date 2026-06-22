@@ -20,17 +20,15 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sproto-rust = "0.1"
+sproto = "0.1"
 ```
 
 The `derive` feature is enabled by default. To use only the Direct API without proc-macro dependencies:
 
 ```toml
 [dependencies]
-sproto-rust = { version = "0.1", default-features = false }
+sproto = { version = "0.1", default-features = false }
 ```
-
-Note: The crate is published as `sproto-rust` on crates.io, but the library name is `sproto`, so you use `use sproto::...` in your code.
 
 ## Quick Start
 

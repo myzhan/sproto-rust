@@ -1299,6 +1299,46 @@ fn test_direct_roundtrip_all_fixtures() {
         "full_encoded.bin",
     ];
 
+    let map_fixtures = [
+        "indexed_map_encoded.bin",
+        "anonymous_map_encoded.bin",
+        "both_maps_encoded.bin",
+    ];
+
+    for file in &map_fixtures {
+        let original = testdata(file);
+        let st = sproto.get_type("AddressBook").unwrap();
+
+        let mut re_encoded = Vec::new();
+        {
+            let mut enc = StructEncoder::new(&sproto, st, &mut re_encoded);
+            let mut dec = StructDecoder::new(&sproto, st, &original).unwrap();
+            while let Some(f) = dec.next_field().unwrap() {
+                let field = f.field();
+                enc.encode_struct_array(field.tag, |arr| {
+                    for elem in f.as_struct_iter().unwrap() {
+                        arr.encode_element(|sub_enc| {
+                            let mut sub_dec = elem.unwrap();
+                            while let Some(sf) = sub_dec.next_field().unwrap() {
+                                reencode_scalar(sub_enc, &sf)?;
+                            }
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            }
+            enc.finish();
+        }
+        assert_eq!(
+            hexdump(&re_encoded),
+            hexdump(&original),
+            "decode->re-encode roundtrip failed for {}",
+            file
+        );
+    }
+
     for file in &fixtures {
         let original = testdata(file);
         let st = sproto.get_type("Person").unwrap();
@@ -1358,6 +1398,234 @@ fn test_direct_roundtrip_all_fixtures() {
             file
         );
     }
+}
+
+// ============================================================================
+// Map Tests — *Person(id) indexed map and *PhoneNumber() anonymous map
+// ============================================================================
+
+#[test]
+fn test_direct_encode_indexed_map() {
+    let sproto = load_sproto();
+    let encoded = direct_encode(&sproto, "AddressBook", |enc| {
+        enc.encode_struct_array(0, |arr| {
+            arr.encode_element(|e| {
+                e.set_string(0, "Alice")?;
+                e.set_integer(6, 10000)?;
+                Ok(())
+            })?;
+            arr.encode_element(|e| {
+                e.set_string(0, "Bob")?;
+                e.set_integer(6, 20000)?;
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+        Ok(())
+    });
+    let fixture = testdata("indexed_map_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&fixture));
+}
+
+#[test]
+fn test_direct_decode_indexed_map() {
+    let sproto = load_sproto();
+    let st = sproto.get_type("AddressBook").unwrap();
+    let fixture = testdata("indexed_map_encoded.bin");
+    let mut dec = StructDecoder::new(&sproto, st, &fixture).unwrap();
+
+    let f = dec.next_field().unwrap().unwrap();
+    assert_eq!(f.tag(), 0);
+
+    let mut persons = Vec::new();
+    for elem in f.as_struct_iter().unwrap() {
+        let mut sub = elem.unwrap();
+        let mut name = String::new();
+        let mut id = 0i64;
+        while let Some(sf) = sub.next_field().unwrap() {
+            match sf.tag() {
+                0 => name = sf.as_string().unwrap().to_owned(),
+                6 => id = sf.as_integer().unwrap(),
+                _ => {}
+            }
+        }
+        persons.push((name, id));
+    }
+
+    assert_eq!(persons.len(), 2);
+    assert!(persons.contains(&("Alice".to_owned(), 10000)));
+    assert!(persons.contains(&("Bob".to_owned(), 20000)));
+}
+
+#[test]
+fn test_direct_encode_anonymous_map() {
+    let sproto = load_sproto();
+    let encoded = direct_encode(&sproto, "AddressBook", |enc| {
+        enc.encode_struct_array(1, |arr| {
+            arr.encode_element(|e| {
+                e.set_string(0, "87654321")?;
+                e.set_integer(1, 2)?;
+                Ok(())
+            })?;
+            arr.encode_element(|e| {
+                e.set_string(0, "123456789")?;
+                e.set_integer(1, 1)?;
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+        Ok(())
+    });
+    let fixture = testdata("anonymous_map_encoded.bin");
+    assert_eq!(hexdump(&encoded), hexdump(&fixture));
+}
+
+#[test]
+fn test_direct_decode_anonymous_map() {
+    let sproto = load_sproto();
+    let st = sproto.get_type("AddressBook").unwrap();
+    let fixture = testdata("anonymous_map_encoded.bin");
+    let mut dec = StructDecoder::new(&sproto, st, &fixture).unwrap();
+
+    let f = dec.next_field().unwrap().unwrap();
+    assert_eq!(f.tag(), 1);
+
+    let mut entries = Vec::new();
+    for elem in f.as_struct_iter().unwrap() {
+        let mut sub = elem.unwrap();
+        let mut number = String::new();
+        let mut ptype = 0i64;
+        while let Some(sf) = sub.next_field().unwrap() {
+            match sf.tag() {
+                0 => number = sf.as_string().unwrap().to_owned(),
+                1 => ptype = sf.as_integer().unwrap(),
+                _ => {}
+            }
+        }
+        entries.push((number, ptype));
+    }
+
+    assert_eq!(entries.len(), 2);
+    assert!(entries.contains(&("123456789".to_owned(), 1)));
+    assert!(entries.contains(&("87654321".to_owned(), 2)));
+}
+
+#[test]
+fn test_direct_decode_both_maps() {
+    let sproto = load_sproto();
+    let st = sproto.get_type("AddressBook").unwrap();
+    let fixture = testdata("both_maps_encoded.bin");
+    let mut dec = StructDecoder::new(&sproto, st, &fixture).unwrap();
+
+    let mut person_count = 0;
+    let mut phonemap_count = 0;
+
+    while let Some(f) = dec.next_field().unwrap() {
+        match f.tag() {
+            0 => {
+                for elem in f.as_struct_iter().unwrap() {
+                    let mut sub = elem.unwrap();
+                    while let Some(_sf) = sub.next_field().unwrap() {}
+                    person_count += 1;
+                }
+            }
+            1 => {
+                for elem in f.as_struct_iter().unwrap() {
+                    let mut sub = elem.unwrap();
+                    while let Some(_sf) = sub.next_field().unwrap() {}
+                    phonemap_count += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(person_count, 1);
+    assert_eq!(phonemap_count, 1);
+}
+
+#[test]
+fn test_direct_roundtrip_indexed_map() {
+    let sproto = load_sproto();
+    let st = sproto.get_type("AddressBook").unwrap();
+
+    let mut buf = Vec::new();
+    {
+        let mut enc = StructEncoder::new(&sproto, st, &mut buf);
+        enc.encode_struct_array(0, |arr| {
+            arr.encode_element(|e| {
+                e.set_string(0, "Alice")?;
+                e.set_integer(6, 10000)?;
+                Ok(())
+            })?;
+            arr.encode_element(|e| {
+                e.set_string(0, "Bob")?;
+                e.set_integer(6, 20000)?;
+                Ok(())
+            })?;
+            Ok(())
+        })
+        .unwrap();
+        enc.finish();
+    }
+
+    let mut dec = StructDecoder::new(&sproto, st, &buf).unwrap();
+    let f = dec.next_field().unwrap().unwrap();
+    assert_eq!(f.tag(), 0);
+    let mut count = 0;
+    for elem in f.as_struct_iter().unwrap() {
+        let mut sub = elem.unwrap();
+        while let Some(_sf) = sub.next_field().unwrap() {}
+        count += 1;
+    }
+    assert_eq!(count, 2);
+}
+
+#[test]
+fn test_direct_roundtrip_anonymous_map() {
+    let sproto = load_sproto();
+    let st = sproto.get_type("AddressBook").unwrap();
+
+    let mut buf = Vec::new();
+    {
+        let mut enc = StructEncoder::new(&sproto, st, &mut buf);
+        enc.encode_struct_array(1, |arr| {
+            arr.encode_element(|e| {
+                e.set_string(0, "123456789")?;
+                e.set_integer(1, 1)?;
+                Ok(())
+            })?;
+            arr.encode_element(|e| {
+                e.set_string(0, "87654321")?;
+                e.set_integer(1, 2)?;
+                Ok(())
+            })?;
+            Ok(())
+        })
+        .unwrap();
+        enc.finish();
+    }
+
+    let mut dec = StructDecoder::new(&sproto, st, &buf).unwrap();
+    let f = dec.next_field().unwrap().unwrap();
+    assert_eq!(f.tag(), 1);
+    let mut entries = Vec::new();
+    for elem in f.as_struct_iter().unwrap() {
+        let mut sub = elem.unwrap();
+        let mut number = String::new();
+        let mut ptype = 0i64;
+        while let Some(sf) = sub.next_field().unwrap() {
+            match sf.tag() {
+                0 => number = sf.as_string().unwrap().to_owned(),
+                1 => ptype = sf.as_integer().unwrap(),
+                _ => {}
+            }
+        }
+        entries.push((number, ptype));
+    }
+    assert_eq!(entries.len(), 2);
+    assert!(entries.contains(&("123456789".to_owned(), 1)));
+    assert!(entries.contains(&("87654321".to_owned(), 2)));
 }
 
 /// Re-encode a single scalar field from a DecodedField into a StructEncoder.

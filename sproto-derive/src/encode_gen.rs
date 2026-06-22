@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields};
 
-use crate::classify::{classify_type, ClassifiedField, FieldKind};
+use crate::classify::{classify_scalar_kind, classify_type, ClassifiedField, FieldKind};
 use crate::parse::parse_field_attrs;
 
 struct FieldInfo {
@@ -36,7 +36,13 @@ pub fn generate(input: &DeriveInput) -> syn::Result<TokenStream> {
     let mut field_infos: Vec<FieldInfo> = Vec::new();
     for field in fields.iter() {
         let attrs = parse_field_attrs(&field.attrs)?;
-        let classified = classify_type(&field.ty, attrs.decimal);
+        let classified = classify_type(
+            &field.ty,
+            attrs.decimal,
+            attrs.key,
+            attrs.value,
+            attrs.key_field,
+        );
         field_infos.push(FieldInfo {
             ident: field.ident.clone().unwrap(),
             tag: attrs.tag,
@@ -169,6 +175,70 @@ fn gen_encode_required(ident: &syn::Ident, tag: u16, classified: &ClassifiedFiel
                 }
             }
         }
+        FieldKind::IndexedMap { .. } => gen_encode_indexed_map(ident, tag),
+        FieldKind::AnonymousMap { key_ty, val_ty } => {
+            gen_encode_anonymous_map(ident, tag, key_ty, val_ty, classified)
+        }
+    }
+}
+
+fn gen_encode_indexed_map(ident: &syn::Ident, tag: u16) -> TokenStream {
+    quote! {
+        if !self.#ident.is_empty() {
+            enc.encode_struct_array(#tag, |arr| {
+                for __item in self.#ident.values() {
+                    arr.encode_element(|sub| __item.sproto_encode(sub))?;
+                }
+                Ok(())
+            })?;
+        }
+    }
+}
+
+fn gen_encode_anonymous_map(
+    ident: &syn::Ident,
+    tag: u16,
+    key_ty: &syn::Type,
+    val_ty: &syn::Type,
+    classified: &ClassifiedField,
+) -> TokenStream {
+    let key_tag = classified.key_tag.expect("AnonymousMap must have key_tag");
+    let value_tag = classified
+        .value_tag
+        .expect("AnonymousMap must have value_tag");
+    let key_encode = gen_scalar_encode_stmt(key_ty, key_tag, true);
+    let val_encode = gen_scalar_encode_stmt(val_ty, value_tag, false);
+
+    quote! {
+        if !self.#ident.is_empty() {
+            enc.encode_struct_array(#tag, |arr| {
+                for (__k, __v) in &self.#ident {
+                    arr.encode_element(|sub| {
+                        #key_encode
+                        #val_encode
+                        Ok(())
+                    })?;
+                }
+                Ok(())
+            })?;
+        }
+    }
+}
+
+fn gen_scalar_encode_stmt(ty: &syn::Type, tag: u16, is_key: bool) -> TokenStream {
+    let var = if is_key {
+        quote! { __k }
+    } else {
+        quote! { __v }
+    };
+    let kind = classify_scalar_kind(ty);
+    match kind {
+        FieldKind::Integer => quote! { sub.set_integer(#tag, *#var as i64)?; },
+        FieldKind::Bool => quote! { sub.set_bool(#tag, *#var)?; },
+        FieldKind::Double => quote! { sub.set_double(#tag, *#var as f64)?; },
+        FieldKind::StringField => quote! { sub.set_string(#tag, #var)?; },
+        FieldKind::Binary => quote! { sub.set_bytes(#tag, #var)?; },
+        _ => quote! { sub.set_string(#tag, &#var.to_string())?; },
     }
 }
 
@@ -246,5 +316,37 @@ fn gen_encode_value_from_ref(
         FieldKind::NestedStruct(_) => quote! {
             enc.encode_nested(#tag, |sub| __v.sproto_encode(sub))?;
         },
+        FieldKind::IndexedMap { .. } => quote! {
+            if !__v.is_empty() {
+                enc.encode_struct_array(#tag, |arr| {
+                    for __item in __v.values() {
+                        arr.encode_element(|sub| __item.sproto_encode(sub))?;
+                    }
+                    Ok(())
+                })?;
+            }
+        },
+        FieldKind::AnonymousMap { key_ty, val_ty } => {
+            let key_tag = classified.key_tag.expect("AnonymousMap must have key_tag");
+            let value_tag = classified
+                .value_tag
+                .expect("AnonymousMap must have value_tag");
+            let key_encode = gen_scalar_encode_stmt(key_ty, key_tag, true);
+            let val_encode = gen_scalar_encode_stmt(val_ty, value_tag, false);
+            quote! {
+                if !__v.is_empty() {
+                    enc.encode_struct_array(#tag, |arr| {
+                        for (__k, __v) in __v {
+                            arr.encode_element(|sub| {
+                                #key_encode
+                                #val_encode
+                                Ok(())
+                            })?;
+                        }
+                        Ok(())
+                    })?;
+                }
+            }
+        }
     }
 }

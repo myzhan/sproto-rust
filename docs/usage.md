@@ -68,6 +68,8 @@ assert_eq!(decoded.name, "Alice");
 | `Vec<String>` | `*string` | `#[sproto(tag = N)]` |
 | `Vec<Vec<u8>>` | `*binary` | `#[sproto(tag = N)]` |
 | `Vec<T>` (T 为 derive struct) | `*Type` | `#[sproto(tag = N)]` |
+| `HashMap<K, Struct>` | `*Type(key)` 索引 map | `#[sproto(tag = N, key = K, key_field = "f")]` |
+| `HashMap<K, V>` | `*Type()` 匿名 map | `#[sproto(tag = N, key = K, value = V)]` |
 | `Option<T>` | 可选字段 | `#[sproto(tag = N)]` |
 | `Box<T>` | 嵌套结构体 | `#[sproto(tag = N)]` |
 | Derive struct | `.Type` | `#[sproto(tag = N)]` |
@@ -123,6 +125,53 @@ struct Contact {
     parent: Option<Box<Contact>>,    // 可选 Box 嵌套（递归类型需要 Box）
 }
 ```
+
+### Map 字段
+
+sproto 支持两种 map 语义，线上编码均为 struct array，但在 Rust 侧映射为 `HashMap`。
+
+#### 索引 map `*Type(key)` — 用结构体中某个字段做 key
+
+```rust
+use std::collections::HashMap;
+
+#[derive(SprotoEncode, SprotoDecode)]
+struct Person {
+    #[sproto(tag = 0)]
+    name: String,
+    #[sproto(tag = 1)]
+    id: i64,
+}
+
+#[derive(SprotoEncode, SprotoDecode)]
+struct AddressBook {
+    // *Person(id)：用 Person.id (tag=1) 做 key
+    #[sproto(tag = 0, key = 1, key_field = "id")]
+    person: HashMap<i64, Person>,
+}
+```
+
+- `key = 1`：key 字段在子结构体中的 sproto tag
+- `key_field = "id"`：key 字段在 Rust struct 中的名称，解码时通过 `item.id` 提取 key
+
+#### 匿名 map `*Type()` — 两字段结构体展平为 key-value
+
+```rust
+// sproto 定义:
+// .PhoneNumber { number 0 : string; type 1 : integer }
+// phonemap 1 : *PhoneNumber()
+
+#[derive(SprotoEncode, SprotoDecode)]
+struct Contact {
+    // *PhoneNumber()：number(tag=0) 做 key，type(tag=1) 做 value
+    #[sproto(tag = 1, key = 0, value = 1)]
+    phonemap: HashMap<String, i64>,
+}
+```
+
+- `key = 0`：key 字段的 tag（PhoneNumber.number）
+- `value = 1`：value 字段的 tag（PhoneNumber.type）
+- 结构体被展平，不保留原始结构
 
 ### 完整管线（编码 + 压缩 + 解压 + 解码）
 
@@ -479,4 +528,6 @@ host.register_session(1);
 | `binary` | `Vec<u8>` / `&[u8]` | `set_bytes` | `as_bytes` |
 | `double` | `f64` | `set_double` | `as_double` |
 | `*type` | `Vec<T>` | `set_*_array` / `encode_struct_array` | `as_*_array` / `as_struct_iter` |
+| `*type(key)` | `HashMap<K, Struct>` | `encode_struct_array` | `as_struct_iter` |
+| `*type()` | `HashMap<K, V>` | `encode_struct_array` | `as_struct_iter` |
 | `.Type` | 嵌套结构体 | `encode_nested` | `as_struct` |

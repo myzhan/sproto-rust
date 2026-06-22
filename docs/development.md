@@ -23,7 +23,7 @@ sproto-rust/
     Cargo.toml
     src/
       lib.rs                -- #[derive(SprotoEncode, SprotoDecode)] 入口
-      parse.rs              -- #[sproto(tag = N, decimal = M)] 属性解析
+      parse.rs              -- #[sproto(tag, decimal, key, value, key_field)] 属性解析
       classify.rs           -- Rust 类型 → wire kind 分类
       encode_gen.rs         -- SprotoEncode impl 代码生成
       decode_gen.rs         -- SprotoDecode impl 代码生成
@@ -125,12 +125,12 @@ cargo test -- --nocapture
 | 测试类别 | 文件 | 数量 | 说明 |
 |---------|------|------|------|
 | 单元测试 | src/ 各模块内 | 29 | 组件级测试（线格式读写、pack/unpack、RPC header、StructEncoder/StructDecoder 往返等） |
-| Direct 测试 | direct_tests.rs | 50 | StructEncoder/StructDecoder 编解码，含 C 生成二进制对比 |
-| Derive 测试 | derive_tests.rs | 25 | Derive API roundtrip、fixture 解码、编解码一致性 |
+| Direct 测试 | direct_tests.rs | 57 | StructEncoder/StructDecoder 编解码，含 C 生成二进制对比、map 编解码及 fixture 交叉验证 |
+| Derive 测试 | derive_tests.rs | 34 | Derive API roundtrip、fixture 解码、编解码一致性、HashMap map 往返及 fixture 交叉验证 |
 | 压缩测试 | pack_tests.rs | 24 | pack/unpack 交叉验证 |
 | 二进制模式 | binary_schema_tests.rs | 2 | 加载 C 生成的 .bin 模式 |
 | RPC 测试 | rpc_tests.rs | 15 | RPC 功能（dispatch、session、协议配置、错误处理） |
-| **合计** | | **145** | 全部通过 |
+| **合计** | | **161** | 全部通过 |
 
 ### 测试策略
 

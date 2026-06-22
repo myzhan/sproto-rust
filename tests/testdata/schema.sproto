@@ -19,3 +19,8 @@
     flags 12 : *boolean
     values 13 : *double
 }
+
+.AddressBook {
+    person 0 : *Person(id)
+    phonemap 1 : *PhoneNumber()
+}

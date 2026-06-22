@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::codec::wire::*;
-use crate::error::{DecodeError, RpcError};
+use crate::error::{DecodeError, EncodeError, RpcError};
 use crate::pack;
 use crate::types::Sproto;
 
 /// Decoded package header fields (private).
 struct PackageHeader {
-    type_tag: Option<i64>,
-    session: Option<i64>,
+    type_tag: Option<u16>,
+    session: Option<u64>,
     ud: Option<i64>,
     bytes_consumed: usize,
 }
@@ -57,8 +57,7 @@ impl Responder {
     /// serde or derive encoding). Pass an empty slice if there is no response data.
     pub fn respond(&self, body: &[u8], ud: Option<i64>) -> Result<Vec<u8>, RpcError> {
         // Response header: no type field (indicates response), session present
-        let header = encode_package_header(None, Some(self.session), ud);
-        let mut combined = header;
+        let mut combined = encode_package_header(None, Some(self.session), ud)?;
         combined.extend_from_slice(body);
         Ok(pack::pack(&combined))
     }
@@ -93,13 +92,12 @@ impl RequestSender {
         let proto_tag = proto.tag;
 
         // Build request header with protocol type tag
-        let header = encode_package_header(Some(proto_tag), session, ud);
+        let mut combined = encode_package_header(Some(proto_tag), session, ud)?;
 
         if let Some(s) = session {
             self.sessions.insert(s, ());
         }
 
-        let mut combined = header;
         combined.extend_from_slice(body);
         Ok(pack::pack(&combined))
     }
@@ -131,18 +129,15 @@ impl Host {
         let header = decode_package_header(&unpacked)?;
         let body = unpacked[header.bytes_consumed..].to_vec();
 
-        if let Some(proto_type) = header.type_tag {
+        if let Some(proto_tag) = header.type_tag {
             // REQUEST
             let proto = self
                 .sproto
-                .get_protocol_by_tag(proto_type as u16)
-                .ok_or_else(|| RpcError::UnknownProtocol(format!("tag {}", proto_type)))?;
+                .get_protocol_by_tag(proto_tag)
+                .ok_or_else(|| RpcError::UnknownProtocol(format!("tag {}", proto_tag)))?;
 
             let proto_name = proto.name.clone();
-
-            let responder = header
-                .session
-                .map(|s| Box::new(Responder { session: s as u64 }));
+            let responder = header.session.map(|s| Box::new(Responder { session: s }));
 
             Ok(DispatchResult::Request {
                 name: proto_name,
@@ -154,7 +149,7 @@ impl Host {
             // RESPONSE
             let session_id = header.session.ok_or_else(|| {
                 RpcError::Decode(DecodeError::InvalidData("response without session".into()))
-            })? as u64;
+            })?;
 
             if !self.sessions.remove(&session_id) {
                 return Err(RpcError::UnknownSession(session_id));
@@ -192,7 +187,14 @@ impl Host {
 // ---------------------------------------------------------------------------
 
 /// Encode a package header directly into sproto wire format.
-fn encode_package_header(type_tag: Option<u16>, session: Option<u64>, ud: Option<i64>) -> Vec<u8> {
+///
+/// Returns an error if `session` exceeds `i64::MAX` (the wire format uses
+/// signed integers, so such values cannot roundtrip).
+fn encode_package_header(
+    type_tag: Option<u16>,
+    session: Option<u64>,
+    ud: Option<i64>,
+) -> Result<Vec<u8>, RpcError> {
     let mut descriptors: Vec<u16> = Vec::with_capacity(4);
     let mut data_part: Vec<u8> = Vec::new();
     let mut last_tag: i32 = -1;
@@ -204,8 +206,14 @@ fn encode_package_header(type_tag: Option<u16>, session: Option<u64>, ud: Option
     }
 
     if let Some(s) = session {
+        let s_i64: i64 = s.try_into().map_err(|_| {
+            RpcError::Encode(EncodeError::Other(format!(
+                "session {} exceeds i64::MAX",
+                s
+            )))
+        })?;
         push_tag_gap(&mut descriptors, 1, last_tag);
-        encode_header_int(s as i64, &mut descriptors, &mut data_part);
+        encode_header_int(s_i64, &mut descriptors, &mut data_part);
         last_tag = 1;
     }
 
@@ -222,7 +230,7 @@ fn encode_package_header(type_tag: Option<u16>, session: Option<u64>, ud: Option
         write_u16_le(&mut buf[SIZEOF_HEADER + i * SIZEOF_FIELD..], d);
     }
     buf.extend_from_slice(&data_part);
-    buf
+    Ok(buf)
 }
 
 /// Push a skip descriptor if there is a tag gap.
@@ -288,8 +296,8 @@ fn decode_package_header(data: &[u8]) -> Result<PackageHeader, DecodeError> {
     let mut data_offset = field_part_end;
 
     let mut tag: i32 = -1;
-    let mut type_tag: Option<i64> = None;
-    let mut session: Option<i64> = None;
+    let mut type_tag: Option<u16> = None;
+    let mut session: Option<u64> = None;
     let mut ud: Option<i64> = None;
 
     for i in 0..fn_count {
@@ -337,8 +345,16 @@ fn decode_package_header(data: &[u8]) -> Result<PackageHeader, DecodeError> {
         };
 
         match tag {
-            0 => type_tag = Some(int_val),
-            1 => session = Some(int_val),
+            0 => {
+                type_tag = Some(int_val.try_into().map_err(|_| {
+                    DecodeError::InvalidData(format!("protocol tag {} out of u16 range", int_val))
+                })?);
+            }
+            1 => {
+                session = Some(int_val.try_into().map_err(|_| {
+                    DecodeError::InvalidData(format!("session {} is negative", int_val))
+                })?);
+            }
             2 => ud = Some(int_val),
             _ => {} // ignore unknown fields
         }
@@ -358,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_header_request_basic() {
-        let encoded = encode_package_header(Some(5), Some(1), None);
+        let encoded = encode_package_header(Some(5), Some(1), None).unwrap();
         let h = decode_package_header(&encoded).unwrap();
         assert_eq!(h.type_tag, Some(5));
         assert_eq!(h.session, Some(1));
@@ -368,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_header_response_with_ud() {
-        let encoded = encode_package_header(None, Some(42), Some(-10));
+        let encoded = encode_package_header(None, Some(42), Some(-10)).unwrap();
         let h = decode_package_header(&encoded).unwrap();
         assert_eq!(h.type_tag, None);
         assert_eq!(h.session, Some(42));
@@ -379,16 +395,16 @@ mod tests {
     #[test]
     fn test_header_large_session() {
         let large: u64 = 0x1_0000_0000;
-        let encoded = encode_package_header(Some(1), Some(large), None);
+        let encoded = encode_package_header(Some(1), Some(large), None).unwrap();
         let h = decode_package_header(&encoded).unwrap();
         assert_eq!(h.type_tag, Some(1));
-        assert_eq!(h.session, Some(large as i64));
+        assert_eq!(h.session, Some(large));
         assert_eq!(h.bytes_consumed, encoded.len());
     }
 
     #[test]
     fn test_header_only_type() {
-        let encoded = encode_package_header(Some(100), None, None);
+        let encoded = encode_package_header(Some(100), None, None).unwrap();
         let h = decode_package_header(&encoded).unwrap();
         assert_eq!(h.type_tag, Some(100));
         assert_eq!(h.session, None);
@@ -397,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_header_all_fields() {
-        let encoded = encode_package_header(Some(3), Some(999), Some(42));
+        let encoded = encode_package_header(Some(3), Some(999), Some(42)).unwrap();
         let h = decode_package_header(&encoded).unwrap();
         assert_eq!(h.type_tag, Some(3));
         assert_eq!(h.session, Some(999));
@@ -407,8 +423,7 @@ mod tests {
 
     #[test]
     fn test_header_with_body_content() {
-        // Verify bytes_consumed correctly separates header from body
-        let header = encode_package_header(Some(1), Some(2), None);
+        let header = encode_package_header(Some(1), Some(2), None).unwrap();
         let mut data = header;
         let body = b"hello body";
         data.extend_from_slice(body);
@@ -419,8 +434,7 @@ mod tests {
 
     #[test]
     fn test_header_empty() {
-        // Empty header (no fields present)
-        let encoded = encode_package_header(None, None, None);
+        let encoded = encode_package_header(None, None, None).unwrap();
         let h = decode_package_header(&encoded).unwrap();
         assert_eq!(h.type_tag, None);
         assert_eq!(h.session, None);
@@ -430,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_header_negative_ud() {
-        let encoded = encode_package_header(Some(0), Some(1), Some(-100));
+        let encoded = encode_package_header(Some(0), Some(1), Some(-100)).unwrap();
         let h = decode_package_header(&encoded).unwrap();
         assert_eq!(h.type_tag, Some(0));
         assert_eq!(h.session, Some(1));
@@ -439,9 +453,15 @@ mod tests {
 
     #[test]
     fn test_header_type_zero() {
-        // type=0 is a valid protocol tag
-        let encoded = encode_package_header(Some(0), None, None);
+        let encoded = encode_package_header(Some(0), None, None).unwrap();
         let h = decode_package_header(&encoded).unwrap();
         assert_eq!(h.type_tag, Some(0));
+    }
+
+    #[test]
+    fn test_session_exceeds_i64_max() {
+        let too_large: u64 = i64::MAX as u64 + 1;
+        let result = encode_package_header(None, Some(too_large), None);
+        assert!(result.is_err());
     }
 }

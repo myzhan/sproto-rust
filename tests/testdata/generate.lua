@@ -158,6 +158,45 @@ write_file("full_packed.bin", sp:pencode("Person", full))
 print("  full: " .. hexdump(sp:encode("Person", full)))
 
 -- =============================================================================
+-- Map fixtures: *Person(id) indexed map and *PhoneNumber() anonymous map
+-- =============================================================================
+
+-- Fixture 13: indexed_map -- *Person(id)
+local indexed_map = {
+    person = {
+        [10000] = { name = "Alice", id = 10000 },
+        [20000] = { name = "Bob", id = 20000 },
+    },
+}
+write_file("indexed_map_encoded.bin", sp:encode("AddressBook", indexed_map))
+write_file("indexed_map_packed.bin", sp:pencode("AddressBook", indexed_map))
+print("  indexed_map: " .. hexdump(sp:encode("AddressBook", indexed_map)))
+
+-- Fixture 14: anonymous_map -- *PhoneNumber()
+local anonymous_map = {
+    phonemap = {
+        ["123456789"] = 1,
+        ["87654321"] = 2,
+    },
+}
+write_file("anonymous_map_encoded.bin", sp:encode("AddressBook", anonymous_map))
+write_file("anonymous_map_packed.bin", sp:pencode("AddressBook", anonymous_map))
+print("  anonymous_map: " .. hexdump(sp:encode("AddressBook", anonymous_map)))
+
+-- Fixture 15: both_maps -- both map types together
+local both_maps = {
+    person = {
+        [10000] = { name = "Alice", id = 10000 },
+    },
+    phonemap = {
+        ["123456789"] = 1,
+    },
+}
+write_file("both_maps_encoded.bin", sp:encode("AddressBook", both_maps))
+write_file("both_maps_packed.bin", sp:pencode("AddressBook", both_maps))
+print("  both_maps: " .. hexdump(sp:encode("AddressBook", both_maps)))
+
+-- =============================================================================
 -- RPC schema (unchanged)
 -- =============================================================================
 

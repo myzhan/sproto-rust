@@ -12,7 +12,6 @@ arbitrary = "1"
 libfuzzer-sys = "0.4"
 
 [dependencies.sproto]
-package = "sproto-rust"
 path = ".."
 
 [[bin]]

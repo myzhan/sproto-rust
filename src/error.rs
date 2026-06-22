@@ -59,6 +59,9 @@ pub enum RpcError {
     #[error("unknown session {0}")]
     UnknownSession(u64),
 
+    #[error("encode error: {0}")]
+    Encode(#[from] EncodeError),
+
     #[error("decode error: {0}")]
     Decode(#[from] DecodeError),
 
