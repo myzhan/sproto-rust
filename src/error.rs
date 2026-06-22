@@ -16,6 +16,9 @@ pub enum EncodeError {
 
     #[error("encode error: {0}")]
     Other(String),
+
+    #[error("integer overflow for field '{field}': {value} does not fit in i64")]
+    IntegerOverflow { field: String, value: f64 },
 }
 
 /// Errors from the binary decoder.

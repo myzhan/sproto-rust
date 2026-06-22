@@ -73,7 +73,8 @@ fn gen_encode_field(field: &FieldInfo) -> TokenStream {
 }
 
 fn gen_encode_optional(ident: &syn::Ident, tag: u16, classified: &ClassifiedField) -> TokenStream {
-    let inner_encode = gen_encode_value_from_ref(tag, classified);
+    let field_name = ident.to_string();
+    let inner_encode = gen_encode_value_from_ref(tag, classified, &field_name);
     if classified.is_boxed {
         quote! {
             if let Some(ref __boxed) = self.#ident {
@@ -103,8 +104,16 @@ fn gen_encode_required(ident: &syn::Ident, tag: u16, classified: &ClassifiedFiel
         },
         FieldKind::Decimal(precision) => {
             let scale = 10_f64.powi(*precision as i32) as u64;
+            let field_name = ident.to_string();
             quote! {
-                enc.set_integer(#tag, (self.#ident * #scale as f64).round() as i64)?;
+                let __scaled = (self.#ident * #scale as f64).round();
+                if !__scaled.is_finite() || __scaled < (i64::MIN as f64) || __scaled > (i64::MAX as f64) {
+                    return Err(::sproto::error::EncodeError::IntegerOverflow {
+                        field: #field_name.to_string(),
+                        value: self.#ident,
+                    });
+                }
+                enc.set_integer(#tag, __scaled as i64)?;
             }
         }
         FieldKind::StringField => quote! {
@@ -164,7 +173,11 @@ fn gen_encode_required(ident: &syn::Ident, tag: u16, classified: &ClassifiedFiel
 }
 
 /// Generate encode for a value accessed through `__v` reference (used in Option unwrap).
-fn gen_encode_value_from_ref(tag: u16, classified: &ClassifiedField) -> TokenStream {
+fn gen_encode_value_from_ref(
+    tag: u16,
+    classified: &ClassifiedField,
+    field_name: &str,
+) -> TokenStream {
     match &classified.kind {
         FieldKind::Integer => quote! {
             enc.set_integer(#tag, *__v as i64)?;
@@ -178,7 +191,14 @@ fn gen_encode_value_from_ref(tag: u16, classified: &ClassifiedField) -> TokenStr
         FieldKind::Decimal(precision) => {
             let scale = 10_f64.powi(*precision as i32) as u64;
             quote! {
-                enc.set_integer(#tag, (*__v * #scale as f64).round() as i64)?;
+                let __scaled = (*__v * #scale as f64).round();
+                if !__scaled.is_finite() || __scaled < (i64::MIN as f64) || __scaled > (i64::MAX as f64) {
+                    return Err(::sproto::error::EncodeError::IntegerOverflow {
+                        field: #field_name.to_string(),
+                        value: *__v,
+                    });
+                }
+                enc.set_integer(#tag, __scaled as i64)?;
             }
         }
         FieldKind::StringField => quote! {

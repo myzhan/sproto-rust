@@ -1,0 +1,53 @@
+[package]
+name = "sproto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = "1"
+libfuzzer-sys = "0.4"
+
+[dependencies.sproto]
+package = "sproto-rust"
+path = ".."
+
+[[bin]]
+name = "decode_direct"
+path = "fuzz_targets/decode_direct.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pack_unpack"
+path = "fuzz_targets/pack_unpack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "derive_roundtrip"
+path = "fuzz_targets/derive_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "binary_schema_load"
+path = "fuzz_targets/binary_schema_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rpc_dispatch"
+path = "fuzz_targets/rpc_dispatch.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

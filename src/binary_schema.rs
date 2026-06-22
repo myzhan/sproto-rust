@@ -83,6 +83,12 @@ pub fn load_binary(data: &[u8]) -> Result<Sproto, DecodeError> {
             });
         }
         let arr_sz = read_u32_le(&data[content_offset..]) as usize;
+        if content_offset + SIZEOF_LENGTH + arr_sz > sz {
+            return Err(DecodeError::Truncated {
+                need: content_offset + SIZEOF_LENGTH + arr_sz,
+                have: sz,
+            });
+        }
         let arr_data =
             &data[content_offset + SIZEOF_LENGTH..content_offset + SIZEOF_LENGTH + arr_sz];
         raw_types = decode_type_array(arr_data)?;
@@ -99,6 +105,12 @@ pub fn load_binary(data: &[u8]) -> Result<Sproto, DecodeError> {
             });
         }
         let arr_sz = read_u32_le(&data[content_offset..]) as usize;
+        if content_offset + SIZEOF_LENGTH + arr_sz > sz {
+            return Err(DecodeError::Truncated {
+                need: content_offset + SIZEOF_LENGTH + arr_sz,
+                have: sz,
+            });
+        }
         let arr_data =
             &data[content_offset + SIZEOF_LENGTH..content_offset + SIZEOF_LENGTH + arr_sz];
         raw_protocols = decode_protocol_array(arr_data)?;
@@ -216,6 +228,12 @@ fn decode_type_array(data: &[u8]) -> Result<Vec<RawType>, DecodeError> {
             });
         }
         let elem_sz = read_u32_le(&data[offset..]) as usize;
+        if offset + SIZEOF_LENGTH + elem_sz > data.len() {
+            return Err(DecodeError::Truncated {
+                need: offset + SIZEOF_LENGTH + elem_sz,
+                have: data.len(),
+            });
+        }
         let elem_data = &data[offset + SIZEOF_LENGTH..offset + SIZEOF_LENGTH + elem_sz];
         types.push(decode_single_type(elem_data)?);
         offset += SIZEOF_LENGTH + elem_sz;
@@ -262,6 +280,12 @@ fn decode_field_array(data: &[u8]) -> Result<Vec<RawField>, DecodeError> {
             });
         }
         let elem_sz = read_u32_le(&data[offset..]) as usize;
+        if offset + SIZEOF_LENGTH + elem_sz > data.len() {
+            return Err(DecodeError::Truncated {
+                need: offset + SIZEOF_LENGTH + elem_sz,
+                have: data.len(),
+            });
+        }
         let elem_data = &data[offset + SIZEOF_LENGTH..offset + SIZEOF_LENGTH + elem_sz];
         fields.push(decode_single_field(elem_data)?);
         offset += SIZEOF_LENGTH + elem_sz;
@@ -338,6 +362,12 @@ fn decode_protocol_array(data: &[u8]) -> Result<Vec<RawProtocol>, DecodeError> {
             });
         }
         let elem_sz = read_u32_le(&data[offset..]) as usize;
+        if offset + SIZEOF_LENGTH + elem_sz > data.len() {
+            return Err(DecodeError::Truncated {
+                need: offset + SIZEOF_LENGTH + elem_sz,
+                have: data.len(),
+            });
+        }
         let elem_data = &data[offset + SIZEOF_LENGTH..offset + SIZEOF_LENGTH + elem_sz];
         protocols.push(decode_single_protocol(elem_data)?);
         offset += SIZEOF_LENGTH + elem_sz;

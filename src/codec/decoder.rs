@@ -380,14 +380,17 @@ impl<'a> Iterator for StructArrayIter<'a> {
             return None;
         }
         if self.offset + SIZEOF_LENGTH > self.data.len() {
+            let need = self.offset + SIZEOF_LENGTH;
+            self.offset = self.data.len();
             return Some(Err(DecodeError::Truncated {
-                need: self.offset + SIZEOF_LENGTH,
+                need,
                 have: self.data.len(),
             }));
         }
         let esz = read_u32_le(&self.data[self.offset..]) as usize;
         let start = self.offset + SIZEOF_LENGTH;
         if start + esz > self.data.len() {
+            self.offset = self.data.len();
             return Some(Err(DecodeError::Truncated {
                 need: start + esz,
                 have: self.data.len(),
